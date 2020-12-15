@@ -432,8 +432,8 @@ class GradleFacetImportTest : GradleImportingTestCase() {
         importProject()
 
         with(facetSettings) {
-            Assert.assertEquals("1.1", languageLevel!!.versionString)
-            Assert.assertEquals("1.1", apiLevel!!.versionString)
+            Assert.assertEquals("1.3", languageLevel!!.versionString)
+            Assert.assertEquals("1.3", apiLevel!!.versionString)
             Assert.assertTrue(targetPlatform.isCommon())
         }
 
@@ -522,8 +522,8 @@ class GradleFacetImportTest : GradleImportingTestCase() {
 
         with(facetSettings) {
             Assert.assertEquals(
-                listOf("-Xallow-no-source-files", "-Xbuild-file=module with spaces"),
-                compilerSettings!!.additionalArgumentsAsList
+                listOf("-Xallow-no-source-files", "-Xbuild-file=module with spaces").sorted(),
+                compilerSettings!!.additionalArgumentsAsList.sorted()
             )
         }
     }
