@@ -9,10 +9,15 @@ import com.intellij.util.PathUtil
 import com.intellij.util.xmlb.SerializationFilter
 import com.intellij.util.xmlb.SkipDefaultsSerializationFilter
 import com.intellij.util.xmlb.XmlSerializer
+import com.jetbrains.rd.util.firstOrNull
 import org.jdom.DataConversionException
 import org.jdom.Element
 import org.jdom.Text
+import org.jetbrains.kotlin.caching.DividedPropertiesWithArgumentAnnotationInfoManager
+import org.jetbrains.kotlin.caching.FlatCompilerArgumentsBucket
+import org.jetbrains.kotlin.caching.isSuitableValue
 import org.jetbrains.kotlin.cli.common.arguments.*
+import org.jetbrains.kotlin.konan.file.File
 import org.jetbrains.kotlin.load.java.JvmAbi
 import org.jetbrains.kotlin.platform.*
 import org.jetbrains.kotlin.platform.impl.FakeK2NativeCompilerArguments
@@ -21,8 +26,11 @@ import org.jetbrains.kotlin.platform.js.isJs
 import org.jetbrains.kotlin.platform.jvm.JdkPlatform
 import org.jetbrains.kotlin.platform.jvm.isJvm
 import org.jetbrains.kotlin.platform.konan.*
+import org.jetbrains.kotlin.utils.addToStdlib.runIf
 import java.lang.reflect.Modifier
 import kotlin.reflect.KClass
+import kotlin.reflect.full.declaredMemberProperties
+import kotlin.reflect.full.memberProperties
 import kotlin.reflect.full.superclasses
 
 fun Element.getOption(name: String) = getChildren("option").firstOrNull { it.getAttribute("name").value == name }
@@ -125,7 +133,8 @@ fun Element.getFacetPlatformByConfigurationElement(): TargetPlatform {
     }.orDefault() // finally, fallback to the default platform
 }
 
-private fun readV2AndLaterConfig(element: Element): KotlinFacetSettings {
+
+private fun readV2AndLaterConfig(element: Element, lazyArguments: KotlinFacetSettings.() -> CommonCompilerArguments?): KotlinFacetSettings {
     return KotlinFacetSettings().apply {
         element.getAttributeValue("useProjectSettings")?.let { useProjectSettings = it.toBoolean() }
         val targetPlatform = element.getFacetPlatformByConfigurationElement()
@@ -142,7 +151,6 @@ private fun readV2AndLaterConfig(element: Element): KotlinFacetSettings {
 
             externalSystemRunTasks = testRunTasks + nativeMainRunTasks
         }
-
         element.getChild("sourceSets")?.let {
             val items = it.getChildren("sourceSet")
             sourceSetNames = items.mapNotNull { (it.content.firstOrNull() as? Text)?.textTrim }
@@ -165,14 +173,7 @@ private fun readV2AndLaterConfig(element: Element): KotlinFacetSettings {
             compilerSettings = CompilerSettings()
             XmlSerializer.deserializeInto(compilerSettings!!, it)
         }
-        element.getChild("compilerArguments")?.let {
-            compilerArguments = targetPlatform.createArguments {
-                freeArgs = mutableListOf()
-                internalArguments = mutableListOf()
-            }
-            XmlSerializer.deserializeInto(compilerArguments!!, it)
-            compilerArguments!!.detectVersionAutoAdvance()
-        }
+        compilerArguments = lazyArguments()
         productionOutputPath = element.getChild("productionOutputPath")?.let {
             PathUtil.toSystemDependentName((it.content.firstOrNull() as? Text)?.textTrim)
         } ?: (compilerArguments as? K2JSCompilerArguments)?.outputFile
@@ -180,6 +181,22 @@ private fun readV2AndLaterConfig(element: Element): KotlinFacetSettings {
             PathUtil.toSystemDependentName((it.content.firstOrNull() as? Text)?.textTrim)
         } ?: (compilerArguments as? K2JSCompilerArguments)?.outputFile
     }
+}
+
+private fun readV3Config(element: Element): KotlinFacetSettings = readV2AndLaterConfig(element) {
+    element.getChild("compilerArguments")?.let { el ->
+        targetPlatform?.createArguments {
+            freeArgs = mutableListOf()
+            internalArguments = mutableListOf()
+        }?.also {
+            XmlSerializer.deserializeInto(it, el)
+            it.detectVersionAutoAdvance()
+        }
+    }
+}
+
+private fun readLatestConfig(element: Element): KotlinFacetSettings = readV2AndLaterConfig(element) {
+    targetPlatform?.let { readCompilerArgumentsBucket(element)?.toCompilerArguments(it) }?.also { it.detectVersionAutoAdvance() }
 }
 
 private fun readElementsList(element: Element, rootElementName: String, elementName: String): List<String>? {
@@ -195,7 +212,7 @@ private fun readElementsList(element: Element, rootElementName: String, elementN
 }
 
 private fun readV2Config(element: Element): KotlinFacetSettings {
-    return readV2AndLaterConfig(element).apply {
+    return readV3Config(element).apply {
         element.getChild("compilerArguments")?.children?.let { args ->
             when {
                 args.any { arg -> arg.attributes[0].value == "coroutinesEnable" && arg.attributes[1].booleanValue } ->
@@ -210,10 +227,6 @@ private fun readV2Config(element: Element): KotlinFacetSettings {
     }
 }
 
-private fun readLatestConfig(element: Element): KotlinFacetSettings {
-    return readV2AndLaterConfig(element)
-}
-
 fun deserializeFacetSettings(element: Element): KotlinFacetSettings {
     val version = try {
         element.getAttribute("version")?.intValue
@@ -223,6 +236,7 @@ fun deserializeFacetSettings(element: Element): KotlinFacetSettings {
     return when (version) {
         1 -> readV1Config(element)
         2 -> readV2Config(element)
+        3 -> readV3Config(element)
         KotlinFacetSettings.CURRENT_VERSION -> readLatestConfig(element)
         else -> return KotlinFacetSettings() // Reset facet configuration if versions don't match
     }.apply { this.version = version }
@@ -301,7 +315,7 @@ private fun buildChildElement(element: Element, tag: String, bean: Any, filter: 
     }
 }
 
-private fun KotlinFacetSettings.writeLatestConfig(element: Element) {
+private fun KotlinFacetSettings.writeV3AndLaterConfig(element: Element, compilerArgumentsWriter: CommonCompilerArguments.() -> Element) {
     val filter = SkipDefaultsSerializationFilter()
 
     // TODO: Introduce new version of facet serialization. See https://youtrack.jetbrains.com/issue/KT-38235
@@ -337,7 +351,7 @@ private fun KotlinFacetSettings.writeLatestConfig(element: Element) {
         element.addContent(
             Element("externalSystemTestTasks").apply {
                 externalSystemRunTasks.forEach { task ->
-                    when(task) {
+                    when (task) {
                         is ExternalSystemTestRunTask -> {
                             addContent(
                                 Element("externalSystemTestTask").apply { addContent(task.toStringRepresentation()) }
@@ -370,12 +384,27 @@ private fun KotlinFacetSettings.writeLatestConfig(element: Element) {
         it.convertPathsToSystemIndependent()
         buildChildElement(element, "compilerSettings", it, filter)
     }
-    compilerArguments?.let { copyBean(it) }?.let {
-        it.convertPathsToSystemIndependent()
-        val compilerArgumentsXml = buildChildElement(element, "compilerArguments", it, filter)
-        compilerArgumentsXml.dropVersionsIfNecessary(it)
-    }
+    compilerArguments?.let { compilerArgumentsWriter(it) }
 }
+
+private fun CommonCompilerArguments.writeToV4Facet(element: Element): Element = copyBean(this).let {
+    it.convertPathsToSystemIndependent()
+    return it.toFlatCompilerArguments().writeCompilerArgumentsBucket(element, it.autoAdvanceLanguageVersion, it.autoAdvanceApiVersion)
+}
+
+private fun KotlinFacetSettings.writeLatestConfig(element: Element) {
+    writeV3AndLaterConfig(element) { writeToV4Facet(element) }
+}
+
+private fun CommonCompilerArguments.writeToV3Facet(element: Element): Element = copyBean(this).let {
+    it.convertPathsToSystemIndependent()
+    val compilerArgumentsXml = buildChildElement(element, "compilerArguments", it, SkipDefaultsSerializationFilter())
+    compilerArgumentsXml.dropVersionsIfNecessary(it)
+    return compilerArgumentsXml
+}
+
+private fun KotlinFacetSettings.writeV3Config(element: Element) = writeV3AndLaterConfig(element) { writeToV3Facet(element) }
+
 
 private fun saveElementsList(element: Element, elementsList: List<String>, rootElementName: String, elementName: String) {
     if (elementsList.isNotEmpty()) {
@@ -410,7 +439,7 @@ fun Element.dropVersionsIfNecessary(settings: CommonCompilerArguments) {
 
 // Special treatment of v2 may be dropped after transition to IDEA 172
 private fun KotlinFacetSettings.writeV2Config(element: Element) {
-    writeLatestConfig(element)
+    writeV3Config(element)
     element.getChild("compilerArguments")?.let {
         it.getOption("coroutinesState")?.detach()
         val coroutineOption = when (compilerArguments?.coroutinesState) {
@@ -483,4 +512,132 @@ private fun String?.deserializeTargetPlatformByComponentPlatforms(): TargetPlatf
             }
         }
     }
+}
+
+private fun CommonCompilerArguments.convertToFlatBucket(): FlatCompilerArgumentsBucket = FlatCompilerArgumentsBucket().also { bucket ->
+    val properties = this::class.java.kotlin.memberProperties
+    val infos = DividedPropertiesWithArgumentAnnotationInfoManager(this::class.java.classLoader).dividedPropertiesWithArgumentAnnotationInfo
+
+    infos.singlePropertiesToArgumentAnnotation.filterKeys { it in properties }
+        .forEach { (k, v) -> k.get(this)?.also { bucket.singleArguments[v.value] = it } }
+
+    infos.multiplePropertiesToArgumentAnnotation.filterKeys { it in properties }
+        .forEach { (k, v) -> k.get(this)?.also { bucket.multipleArguments[v.value] = it.toList() } }
+
+    infos.flagPropertiesToArgumentAnnotation.filterKeys { it in properties }
+        .forEach { (k, v) -> runIf(k.get(this)) { bucket.flagArguments += v.value } }
+
+    infos.classpathPropertiesToArgumentAnnotation.filterKeys { it in properties }
+        .firstOrNull()?.also { (k, v) -> k.get(this)?.also { bucket.classpathParts = v.value to it.split(File.pathSeparator) } }
+
+    bucket.freeArgs += freeArgs
+    bucket.internalArguments += internalArguments.map { it.stringRepresentation }
+}
+
+private fun FlatCompilerArgumentsBucket.toCompilerArguments(targetPlatform: TargetPlatform): CommonCompilerArguments =
+    targetPlatform.createArguments {
+        val properties = this::class.java.kotlin.memberProperties
+        val infos =
+            DividedPropertiesWithArgumentAnnotationInfoManager(this::class.java.classLoader).dividedPropertiesWithArgumentAnnotationInfo
+
+        infos.singlePropertiesToArgumentAnnotation.filterKeys { it in properties }
+            .forEach { (k, _) -> extractSingleArgumentValue(k).also { k.set(this@createArguments, it) } }
+
+        infos.multiplePropertiesToArgumentAnnotation.filterKeys { it in properties }
+            .forEach { (k, _) -> extractMultipleArgumentValue(k).also { k.set(this@createArguments, it) } }
+
+        infos.flagPropertiesToArgumentAnnotation.filterKeys { it in properties }
+            .forEach { (k, _) -> extractFlagArgumentValue(k).also { k.set(this@createArguments, it) } }
+
+        infos.classpathPropertiesToArgumentAnnotation.filterKeys { it in properties }
+            .firstOrNull()?.also { (k, v) -> extractClasspathJoined().also { k.set(this@createArguments, it) } }
+
+        freeArgs = this@toCompilerArguments.freeArgs
+        val parser = LanguageSettingsParser()
+        val errors = errors ?: ArgumentParseErrors().also { errors = it }
+        internalArguments = this@toCompilerArguments.internalArguments.mapNotNull { parser.parseInternalArgument(it, errors) }
+    }
+
+private fun readCompilerArgumentsBucket(element: Element): FlatCompilerArgumentsBucket? {
+    element.getChild("compilerArgumentsBucket")?.let { bucketElement ->
+        val classpathKey = bucketElement.getAttributeValue("classpathKey")
+        val classpathPartsList = readElementsList(bucketElement, "classpathParts", "classpathPart")
+        val classpathParts = classpathKey?.takeIf { !classpathPartsList.isNullOrEmpty() }?.let { it to classpathPartsList!! }
+        val singleArguments = hashMapOf<String, String>().apply {
+            bucketElement.getChild("singleArguments")?.getChildren("singleArgument")?.map {
+                it.getAttributeValue("singleArgumentKey") to it.getAttributeValue("singleArgumentValue")
+            }?.filter { it.first != null && it.second != null }?.also { putAll(it) }
+        }
+        val multipleArguments = hashMapOf<String, List<String>>().apply {
+
+        }
+        val flagArguments = arrayListOf<String>().apply {
+            readElementsList(bucketElement, "flagArguments", "flagArgument")?.also { addAll(it) }
+        }
+        val freeArgs = arrayListOf<String>().apply {
+            readElementsList(bucketElement, "freeArgs", "freeArg")?.also { addAll(it) }
+        }
+        val internalArguments = arrayListOf<String>().apply {
+            readElementsList(bucketElement, "internalArguments", "internalArgument")?.also { addAll(it) }
+        }
+        return FlatCompilerArgumentsBucket(
+            classpathParts,
+            singleArguments,
+            multipleArguments,
+            flagArguments,
+            internalArguments,
+            freeArgs
+        )
+    }
+    return null
+}
+
+private fun FlatCompilerArgumentsBucket.writeCompilerArgumentsBucket(
+    element: Element,
+    autoAdvanceLanguageVersion: Boolean,
+    autoAdvanceApiVersion: Boolean
+): Element {
+    val bucketElement = Element("compilerArgumentsBucket")
+
+    classpathParts?.also { partKv ->
+        bucketElement.setAttribute("classpathKey", partKv.first)
+        saveElementsList(bucketElement, partKv.second, "classpathParts", "classpathPart")
+    }
+    val singleArgumentsElement = Element("singleArguments").also { singleArgsElement ->
+        CommonCompilerArguments::languageVersion.calculateArgumentAnnotation()?.takeIf { autoAdvanceLanguageVersion }?.apply {
+            singleArguments.remove(value)
+            singleArguments.remove(shortName)
+            singleArguments.remove(deprecatedName)
+        }
+        CommonCompilerArguments::apiVersion.calculateArgumentAnnotation()?.takeIf { autoAdvanceApiVersion }?.apply {
+            singleArguments.remove(value)
+            singleArguments.remove(shortName)
+            singleArguments.remove(deprecatedName)
+        }
+
+        singleArguments.forEach { (k, v) ->
+            Element("singleArgument").apply {
+                setAttribute("singleArgumentKey", k)
+                setAttribute("singleArgumentValue", v)
+                singleArgsElement.addContent(this)
+            }
+        }
+    }
+    bucketElement.addContent(singleArgumentsElement)
+
+    val multipleArgumentsElement = Element("multipleArguments").also { multipleArgsElement ->
+        multipleArguments.forEach { (k, v) ->
+            Element("multipleArgument").apply {
+                setAttribute("multipleArgumentKey", k)
+                saveElementsList(this, v, "singleArgumentValues", "singleArgumentValue")
+                multipleArgsElement.addContent(this)
+            }
+        }
+    }
+    bucketElement.addContent(multipleArgumentsElement)
+    saveElementsList(bucketElement, flagArguments, "flagArguments", "flagArgument")
+    saveElementsList(bucketElement, freeArgs, "freeArgs", "freeArg")
+    saveElementsList(bucketElement, internalArguments, "internalArguments", "internalArgument")
+    element.addContent(bucketElement)
+    return bucketElement
 }

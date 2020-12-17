@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.utils.addToStdlib.cast
 import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
+import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.full.memberProperties
@@ -78,10 +79,10 @@ internal fun ArgumentAnnotationInfo.suitArgument(arg: String): SuitResult? {
 }
 
 data class DividedPropertiesWithArgumentAnnotationInfo(
-    val flagPropertiesToArgumentAnnotation: Map<KProperty1<CommonCompilerArguments, Boolean>, ArgumentAnnotationInfo>,
-    val singlePropertiesToArgumentAnnotation: Map<KProperty1<CommonCompilerArguments, String?>, ArgumentAnnotationInfo>,
-    val multiplePropertiesToArgumentAnnotation: Map<KProperty1<CommonCompilerArguments, Array<String>?>, ArgumentAnnotationInfo>,
-    val classpathPropertiesToArgumentAnnotation: Map<KProperty1<CommonCompilerArguments, String?>, ArgumentAnnotationInfo>
+    val flagPropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonCompilerArguments, Boolean>, ArgumentAnnotationInfo>,
+    val singlePropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonCompilerArguments, String?>, ArgumentAnnotationInfo>,
+    val multiplePropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonCompilerArguments, Array<String>?>, ArgumentAnnotationInfo>,
+    val classpathPropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonCompilerArguments, String?>, ArgumentAnnotationInfo>
 )
 
 private fun getClassSafely(className: String, classLoader: ClassLoader?): Class<*>? = try {
@@ -142,15 +143,15 @@ class DividedPropertiesWithArgumentAnnotationInfoManager(val classLoader: ClassL
         }
 
         val classpathPropsToArgumentAnnotation = allPropertiesToArgumentAnnotation.filter { it.key.name == "classpath" }
-            .map { it.key.cast<KProperty1<CommonCompilerArguments, String?>>() to it.value }.toMap()
+            .map { it.key.cast<KMutableProperty1<CommonCompilerArguments, String?>>() to it.value }.toMap()
         val flagPropsToArgumentAnnotation = allPropertiesToArgumentAnnotation.filter { it.key.returnType.classifier == Boolean::class }
-            .map { it.key.cast<KProperty1<CommonCompilerArguments, Boolean>>() to it.value }.toMap()
+            .map { it.key.cast<KMutableProperty1<CommonCompilerArguments, Boolean>>() to it.value }.toMap()
         val singlePropsToArgumentAnnotation =
             allPropertiesToArgumentAnnotation.filter { it.key.returnType.classifier == String::class && it.key.name != "classpath" }
-                .map { it.key.cast<KProperty1<CommonCompilerArguments, String?>>() to it.value }.toMap()
+                .map { it.key.cast<KMutableProperty1<CommonCompilerArguments, String?>>() to it.value }.toMap()
         val multiplePropsToArgumentAnnotation =
             allPropertiesToArgumentAnnotation.filter { it.key.returnType.classifier == Array<String>::class }
-                .map { it.key.cast<KProperty1<CommonCompilerArguments, Array<String>?>>() to it.value }.toMap()
+                .map { it.key.cast<KMutableProperty1<CommonCompilerArguments, Array<String>?>>() to it.value }.toMap()
 
         DividedPropertiesWithArgumentAnnotationInfo(
             flagPropsToArgumentAnnotation,
