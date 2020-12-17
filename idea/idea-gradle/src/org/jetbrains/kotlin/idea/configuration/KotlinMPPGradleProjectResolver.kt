@@ -30,14 +30,9 @@ import org.gradle.tooling.model.UnsupportedMethodException
 import org.gradle.tooling.model.idea.IdeaContentRoot
 import org.gradle.tooling.model.idea.IdeaModule
 import org.jetbrains.annotations.NonNls
-import org.jetbrains.kotlin.cli.common.arguments.CommonCompilerArguments
-import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
-import org.jetbrains.kotlin.cli.common.arguments.ManualLanguageFeatureSetting
-import org.jetbrains.kotlin.cli.common.arguments.parseCommandLineArguments
-import org.jetbrains.kotlin.config.ExternalSystemNativeMainRunTask
-import org.jetbrains.kotlin.config.ExternalSystemRunTask
-import org.jetbrains.kotlin.config.ExternalSystemTestRunTask
-import org.jetbrains.kotlin.config.LanguageFeature
+import org.jetbrains.kotlin.caching.*
+import org.jetbrains.kotlin.cli.common.arguments.*
+import org.jetbrains.kotlin.config.*
 import org.jetbrains.kotlin.gradle.*
 import org.jetbrains.kotlin.idea.configuration.GradlePropertiesFileFacade.Companion.KOTLIN_NOT_IMPORTED_COMMON_SOURCE_SETS_SETTING
 import org.jetbrains.kotlin.idea.configuration.klib.KotlinNativeLibrariesDependencySubstitutor
@@ -62,6 +57,7 @@ import java.lang.reflect.Proxy
 import java.util.*
 import java.util.stream.Collectors
 import kotlin.collections.HashMap
+import kotlin.reflect.KProperty1
 
 @Order(ExternalSystemConstants.UNORDERED + 1)
 open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionCompat() {
@@ -262,6 +258,41 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
             }
         }
 
+        private fun KotlinMPPGradleModel.mergeMapper(ideModule: DataNode<ModuleData>) = ideModule.getDataNode(ProjectKeys.PROJECT)!!.also {
+            it.mppProjectCompilerArgumentsMapper.mergeMapper(compilerArgumentsMapper)
+        }
+
+        private fun KotlinMPPGradleModel.populateSourceSetsWithCompilerArguments(
+            ideModule: DataNode<ModuleData>,
+            ideProject: DataNode<ProjectData>
+        ) {
+
+            val compilations = targets.flatMap { it.compilations }
+            val mppMapper = ideProject.mppProjectCompilerArgumentsMapper ?: return
+            for (compilation in compilations) {
+                val kotlinSourceSetInfo = ideModule.kotlinSourceSetInfoByCompilation[compilation] ?: continue
+                val flatArgsInfo = compilation.cachedArgsInfo.convertToFlat(mppMapper)
+                kotlinSourceSetInfo.flatArgsInfo = flatArgsInfo
+
+                if (compilation.platform == KotlinPlatform.JVM || compilation.platform == KotlinPlatform.ANDROID) {
+                    ideModule.compilationDataByCompilation[compilation]?.targetCompatibility =
+                        flatArgsInfo.currentCompilerArgumentsBucket.extractSingleArgumentValue(K2JVMCompilerArguments::jvmTarget)
+                }
+
+            }
+        }
+
+        fun <T : CommonToolArguments> CachedCompilerArgumentsBucket.extractGeneralArgument(
+            property: KProperty1<T, *>,
+            mapper: CompilerArgumentsMapper
+        ): String? {
+            val argumentAnnotation = property.annotations.firstOrNull { it is Argument } as? Argument ?: return null
+            val info = with(argumentAnnotation) { ArgumentAnnotationInfo(value, shortName, deprecatedName, delimiter, isAdvanced) }
+            val cacheMapping = mapper.copyCache()
+            val key = cacheMapping.entries.firstOrNull { info.isSuitableValue(it.value) }?.key
+            return singleArguments[key]?.let { mapper.getArgument(it) }
+        }
+
         fun initializeModuleData(
             gradleModule: IdeaModule,
             mainModuleNode: DataNode<ModuleData>,
@@ -361,13 +392,13 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
                         compilation,
                         gradleModule,
                         resolverCtx
-                    ) ?: continue
+                    )?.also {
+                        mainModuleNode.kotlinSourceSetInfoByCompilation[compilation] = it
+                    } ?: continue
                     kotlinSourceSet.externalSystemRunTasks =
                         compilation.sourceSets.firstNotNullResult { sourceSetToRunTasks[it] } ?: emptyList()
 
-                    if (compilation.platform == KotlinPlatform.JVM || compilation.platform == KotlinPlatform.ANDROID) {
-                        compilationData.targetCompatibility = (kotlinSourceSet.compilerArguments as? K2JVMCompilerArguments)?.jvmTarget
-                    } else if (compilation.platform == KotlinPlatform.NATIVE) {
+                    if (compilation.platform == KotlinPlatform.NATIVE) {
                         // Kotlin/Native target has been added to KotlinNativeCompilation only in 1.3.60,
                         // so 'nativeExtensions' may be null in 1.3.5x or earlier versions
                         compilation.nativeExtensions?.konanTarget?.let { konanTarget ->
@@ -515,6 +546,9 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
             resolverCtx: ProjectResolverContext
         ) {
             val mppModel = resolverCtx.getMppModel(gradleModule) ?: return
+            with(mppModel) {
+                mergeMapper(ideModule)
+            }
             val sourceSetToPackagePrefix = mppModel.targets.flatMap { it.compilations }
                 .flatMap { compilation ->
                     compilation.sourceSets.map { sourceSet -> sourceSet.name to compilation.kotlinTaskProperties.packagePrefix }
@@ -580,6 +614,7 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
             resolverCtx: ProjectResolverContext
         ) {
             val mppModel = resolverCtx.getMppModel(gradleModule) ?: return
+            mppModel.populateSourceSetsWithCompilerArguments(ideModule, ideProject)
             mppModel.dependencyMap.values.modifyDependenciesOnMppModules(ideProject, resolverCtx)
             val sourceSetMap = ideProject.getUserData(GradleProjectResolver.RESOLVED_SOURCE_SETS) ?: return
             val artifactsMap = ideProject.getUserData(CONFIGURATION_ARTIFACTS) ?: return
@@ -782,7 +817,8 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
             if (fromModule.data == toModule.data) return
             val fromData = fromModule.data as? ModuleData ?: return
             val toData = toModule.data as? ModuleData ?: return
-            val existing = fromModule.children.mapNotNull { it.data as? ModuleDependencyData }.filter { it.target.id == (toModule.data as? ModuleData)?.id }
+            val existing = fromModule.children.mapNotNull { it.data as? ModuleDependencyData }
+                .filter { it.target.id == (toModule.data as? ModuleData)?.id }
             val nodeToModify =
                 existing.singleOrNull() ?: existing.firstOrNull { it.scope == DependencyScope.COMPILE } ?: existing.firstOrNull()
             if (nodeToModify != null) {
@@ -999,21 +1035,21 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
                     getGradleModuleQualifiedName(resolverCtx, gradleModule, it)
                 }
                 //TODO(auskov): target flours are lost here
-                info.compilerArguments = createCompilerArguments(emptyList(), sourceSet.actualPlatforms.getSinglePlatform()).also {
-                    it.multiPlatform = true
-                    it.languageVersion = languageSettings.languageVersion
-                    it.apiVersion = languageSettings.apiVersion
-                    it.progressiveMode = languageSettings.isProgressiveMode
-                    it.internalArguments = languageSettings.enabledLanguageFeatures.mapNotNull {
-                        val feature = LanguageFeature.fromString(it) ?: return@mapNotNull null
-                        val arg = "-XXLanguage:+$it"
-                        ManualLanguageFeatureSetting(feature, LanguageFeature.State.ENABLED, arg)
-                    }
-                    it.useExperimental = languageSettings.experimentalAnnotationsInUse.toTypedArray()
-                    it.pluginOptions = languageSettings.compilerPluginArguments
-                    it.pluginClasspaths = languageSettings.compilerPluginClasspath.map(File::getPath).toTypedArray()
-                    it.freeArgs = languageSettings.freeCompilerArgs.toMutableList()
-                }
+                info.flatArgsInfo =
+                    createCompilerArguments(emptyList(), sourceSet.actualPlatforms.getSinglePlatform(), isMultiplatform = true).also {
+                        it.languageVersion = languageSettings.languageVersion
+                        it.apiVersion = languageSettings.apiVersion
+                        it.progressiveMode = languageSettings.isProgressiveMode
+                        it.internalArguments = languageSettings.enabledLanguageFeatures.mapNotNull {
+                            val feature = LanguageFeature.fromString(it) ?: return@mapNotNull null
+                            val arg = "-XXLanguage:+$it"
+                            ManualLanguageFeatureSetting(feature, LanguageFeature.State.ENABLED, arg)
+                        }
+                        it.useExperimental = languageSettings.experimentalAnnotationsInUse.toTypedArray()
+                        it.pluginOptions = languageSettings.compilerPluginArguments
+                        it.pluginClasspaths = languageSettings.compilerPluginClasspath.map(File::getPath).toTypedArray()
+                        it.freeArgs = languageSettings.freeCompilerArgs.toMutableList()
+                    }.toFlatCompilerArguments().let { FlatArgsInfoImpl(it) }
             }
         }
 
@@ -1040,13 +1076,6 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
                 sourceSetInfo.dependsOn = compilation.sourceSets.flatMap { it.dependsOnSourceSets }.map {
                     getGradleModuleQualifiedName(resolverCtx, gradleModule, it)
                 }.distinct().toList()
-                sourceSetInfo.compilerArguments =
-                    createCompilerArguments(compilation.arguments.currentArguments.toList(), compilation.platform).also {
-                        it.multiPlatform = true
-                    }
-                sourceSetInfo.dependencyClasspath = compilation.dependencyClasspath.toList()
-                sourceSetInfo.defaultCompilerArguments =
-                    createCompilerArguments(compilation.arguments.defaultArguments.toList(), compilation.platform)
                 sourceSetInfo.addSourceSets(compilation.sourceSets, compilation.fullName(), gradleModule, resolverCtx)
             }
         }
@@ -1066,9 +1095,11 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
                 .forEach { sourceSetIdsByName[it.name] = getKotlinModuleId(gradleModule, it, resolverCtx) }
         }
 
-        private fun createCompilerArguments(args: List<String>, platform: KotlinPlatform): CommonCompilerArguments {
+        private fun createCompilerArguments(args: List<String>, platform: KotlinPlatform, isMultiplatform: Boolean? = null)
+                : CommonCompilerArguments {
             val compilerArguments = IdePlatformKindTooling.getTooling(platform).kind.argumentsClass.newInstance()
             parseCommandLineArguments(args.toList(), compilerArguments)
+            isMultiplatform?.also { compilerArguments.multiPlatform = it }
             return compilerArguments
         }
 

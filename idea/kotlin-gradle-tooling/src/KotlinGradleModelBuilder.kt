@@ -9,6 +9,8 @@ import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.ProjectDependency
+import org.jetbrains.kotlin.caching.*
+import org.jetbrains.kotlin.utils.addToStdlib.ifNotEmpty
 import org.jetbrains.plugins.gradle.tooling.ErrorMessageBuilder
 import org.jetbrains.plugins.gradle.tooling.ModelBuilderService
 import java.io.File
@@ -16,56 +18,28 @@ import java.io.Serializable
 import java.lang.reflect.InvocationTargetException
 import java.util.*
 
-interface ArgsInfo : Serializable {
-    val currentArguments: List<String>
-    val defaultArguments: List<String>
-    val dependencyClasspath: List<String>
-}
-
-data class ArgsInfoImpl(
-    override val currentArguments: List<String>,
-    override val defaultArguments: List<String>,
-    override val dependencyClasspath: List<String>
-) : ArgsInfo {
-
-    constructor(argsInfo: ArgsInfo) : this(
-        ArrayList(argsInfo.currentArguments),
-        ArrayList(argsInfo.defaultArguments),
-        ArrayList(argsInfo.dependencyClasspath)
-    )
-}
-
-typealias CompilerArgumentsBySourceSet = Map<String, ArgsInfo>
-
-/**
- * Creates deep copy in order to avoid holding links to Proxy objects created by gradle tooling api
- */
-fun CompilerArgumentsBySourceSet.deepCopy(): CompilerArgumentsBySourceSet {
-    val result = HashMap<String, ArgsInfo>()
-    this.forEach { key, value -> result[key] = ArgsInfoImpl(value) }
-    return result
-}
-
 interface KotlinGradleModel : Serializable {
     val hasKotlinPlugin: Boolean
-    val compilerArgumentsBySourceSet: CompilerArgumentsBySourceSet
+    val cachedCompilerArgumentsBySourceSet: CachedCompilerArgumentBySourceSet
     val coroutines: String?
     val platformPluginId: String?
     val implements: List<String>
     val kotlinTarget: String?
     val kotlinTaskProperties: KotlinTaskPropertiesBySourceSet
     val gradleUserHome: String
+    val compilerArgumentsMapper: ICompilerArgumentsMapper
 }
 
 data class KotlinGradleModelImpl(
     override val hasKotlinPlugin: Boolean,
-    override val compilerArgumentsBySourceSet: CompilerArgumentsBySourceSet,
+    override val cachedCompilerArgumentsBySourceSet: CachedCompilerArgumentBySourceSet,
     override val coroutines: String?,
     override val platformPluginId: String?,
     override val implements: List<String>,
     override val kotlinTarget: String? = null,
     override val kotlinTaskProperties: KotlinTaskPropertiesBySourceSet,
-    override val gradleUserHome: String
+    override val gradleUserHome: String,
+    override val compilerArgumentsMapper: ICompilerArgumentsMapper
 ) : KotlinGradleModel
 
 abstract class AbstractKotlinGradleModelBuilder : ModelBuilderService {
@@ -103,6 +77,11 @@ abstract class AbstractKotlinGradleModelBuilder : ModelBuilderService {
 }
 
 class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
+    companion object {
+        private val modelBuilderMapper = CompilerArgumentsMapperWithCheckout()
+    }
+
+
     override fun getErrorMessageBuilder(project: Project, e: Exception): ErrorMessageBuilder {
         return ErrorMessageBuilder.create(project, e, "Gradle import errors")
             .withDescription("Unable to build Kotlin project configuration")
@@ -130,6 +109,7 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
         }
     }
 
+    @Suppress("UNCHECKED_CAST")
     private fun Task.getDependencyClasspath(): List<String> {
         try {
             val abstractKotlinCompileClass = javaClass.classLoader.loadClass(ABSTRACT_KOTLIN_COMPILE_CLASS)
@@ -163,36 +143,58 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
     }
 
     override fun buildAll(modelName: String?, project: Project): KotlinGradleModelImpl {
+        val modelDetachableMapper = modelBuilderMapper.checkoutMapper()
+
         val kotlinPluginId = kotlinPluginIds.singleOrNull { project.plugins.findPlugin(it) != null }
         val platformPluginId = platformPluginIds.singleOrNull { project.plugins.findPlugin(it) != null }
 
-        val compilerArgumentsBySourceSet = LinkedHashMap<String, ArgsInfo>()
+        val cachedArgumentsBySourceSet = LinkedHashMap<String, CachedArgsInfo>()
         val extraProperties = HashMap<String, KotlinTaskProperties>()
 
-        project.getAllTasks(false)[project]?.forEach { compileTask ->
-            if (compileTask.javaClass.name !in kotlinCompileTaskClasses) return@forEach
+        project.getAllTasks(false)[project]?.filter { it.javaClass.name in kotlinCompileTaskClasses }?.ifNotEmpty {
+            val kotlinExt = project.extensions.getByName("kotlin")
+            val converter = RawToCachedCompilerArgumentsBucketConverter(kotlinExt::class.java.classLoader, modelDetachableMapper)
 
-            val sourceSetName = compileTask.getSourceSetName()
-            val currentArguments = compileTask.getCompilerArguments("getSerializedCompilerArguments")
-                ?: compileTask.getCompilerArguments("getSerializedCompilerArgumentsIgnoreClasspathIssues") ?: emptyList()
-            val defaultArguments = compileTask.getCompilerArguments("getDefaultSerializedCompilerArguments").orEmpty()
-            val dependencyClasspath = compileTask.getDependencyClasspath()
-            compilerArgumentsBySourceSet[sourceSetName] = ArgsInfoImpl(currentArguments, defaultArguments, dependencyClasspath)
-            extraProperties.acknowledgeTask(compileTask, null)
+            forEach { compileTask ->
+                val sourceSetName = compileTask.getSourceSetName()
+
+
+                val currentCompilerArgumentsBucket = converter.convert(
+                    compileTask.getCompilerArguments("getSerializedCompilerArguments")
+                        ?: compileTask.getCompilerArguments("getSerializedCompilerArgumentsIgnoreClasspathIssues")
+                        ?: emptyList()
+                )
+
+                val defaultCompilerArgumentsBucket = converter.convert(
+                    compileTask.getCompilerArguments("getDefaultSerializedCompilerArguments").orEmpty(),
+                )
+
+                val dependencyClasspath = compileTask.getDependencyClasspath()
+                val dependencyClasspathCacheIds =
+                    dependencyClasspath.map { modelDetachableMapper.cacheArgument(it) }
+                cachedArgumentsBySourceSet[sourceSetName] = CachedArgsInfoImpl(
+                    currentCompilerArgumentsBucket,
+                    defaultCompilerArgumentsBucket,
+                    dependencyClasspathCacheIds
+                )
+                extraProperties.acknowledgeTask(compileTask, null)
+            }
         }
-
         val platform = platformPluginId ?: pluginToPlatform.entries.singleOrNull { project.plugins.findPlugin(it.key) != null }?.value
         val implementedProjects = getImplementedProjects(project)
 
+        val detachedMapper = modelDetachableMapper.detach()
+
         return KotlinGradleModelImpl(
             kotlinPluginId != null || platformPluginId != null,
-            compilerArgumentsBySourceSet,
+            cachedArgumentsBySourceSet,
             getCoroutines(project),
             platform,
             implementedProjects.map { it.pathOrName() },
             platform ?: kotlinPluginId,
             extraProperties,
-            project.gradle.gradleUserHomeDir.absolutePath
+            project.gradle.gradleUserHomeDir.absolutePath,
+            detachedMapper
         )
     }
 }

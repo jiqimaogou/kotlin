@@ -33,13 +33,14 @@ import com.intellij.openapi.roots.impl.libraries.LibraryEx
 import com.intellij.openapi.roots.libraries.Library
 import com.intellij.openapi.util.Key
 import com.intellij.util.PathUtil
+import org.jetbrains.kotlin.caching.FlatArgsInfo
+import org.jetbrains.kotlin.caching.FlatToRawCompilerArgumentsBucketConverter
+import org.jetbrains.kotlin.cli.common.arguments.CommonCompilerArguments
 import org.jetbrains.kotlin.cli.common.arguments.K2JSCompilerArguments
 import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
 import org.jetbrains.kotlin.cli.common.arguments.parseCommandLineArguments
 import org.jetbrains.kotlin.config.*
 import org.jetbrains.kotlin.extensions.ProjectExtensionDescriptor
-import org.jetbrains.kotlin.gradle.ArgsInfo
-import org.jetbrains.kotlin.gradle.CompilerArgumentsBySourceSet
 import org.jetbrains.kotlin.ide.konan.NativeLibraryKind
 import org.jetbrains.kotlin.idea.compiler.configuration.KotlinCommonCompilerArgumentsHolder
 import org.jetbrains.kotlin.idea.configuration.GradlePropertiesFileFacade.Companion.KOTLIN_CODE_STYLE_GRADLE_SETTING
@@ -66,9 +67,6 @@ import org.jetbrains.plugins.gradle.model.data.GradleSourceSetData
 import org.jetbrains.plugins.gradle.util.GradleConstants
 import java.io.File
 import java.util.*
-
-var Module.compilerArgumentsBySourceSet
-        by UserDataProperty(Key.create<CompilerArgumentsBySourceSet>("CURRENT_COMPILER_ARGUMENTS"))
 
 var Module.sourceSetName
         by UserDataProperty(Key.create<String>("SOURCE_SET_NAME"))
@@ -173,6 +171,7 @@ class KotlinGradleLibraryDataService : AbstractProjectDataService<LibraryData, V
     ) {
         if (toImport.isEmpty()) return
         val projectDataNode = toImport.first().parent!!
+
         @Suppress("UNCHECKED_CAST")
         val moduleDataNodes = projectDataNode.children.filter { it.data is ModuleData } as List<DataNode<ModuleData>>
         val anyNonJvmModules = moduleDataNodes
@@ -286,14 +285,13 @@ fun configureFacetByGradleModule(
     )
 
     if (sourceSetNode == null) {
-        ideModule.compilerArgumentsBySourceSet = moduleNode.compilerArgumentsBySourceSet
         ideModule.sourceSetName = sourceSetName
     }
     ideModule.hasExternalSdkConfiguration = sourceSetNode?.data?.sdkName != null
 
-    val argsInfo = moduleNode.compilerArgumentsBySourceSet?.get(sourceSetName ?: "main")
-    if (argsInfo != null) {
-        configureFacetByCompilerArguments(kotlinFacet, argsInfo, modelsProvider)
+    val flatArgsInfo = moduleNode.flatCompilerArgumentBySourceSet?.get(sourceSetName ?: "main")
+    if (flatArgsInfo != null) {
+        configureFacetByFlatArgsInfo(kotlinFacet, flatArgsInfo, modelsProvider)
     }
 
     with(kotlinFacet.configuration.settings) {
@@ -311,11 +309,19 @@ fun configureFacetByGradleModule(
     return kotlinFacet
 }
 
-fun configureFacetByCompilerArguments(kotlinFacet: KotlinFacet, argsInfo: ArgsInfo, modelsProvider: IdeModifiableModelsProvider?) {
-    val currentCompilerArguments = argsInfo.currentArguments
-    val defaultCompilerArguments = argsInfo.defaultArguments
-    val dependencyClasspath = argsInfo.dependencyClasspath.map { PathUtil.toSystemIndependentName(it) }
-    if (currentCompilerArguments.isNotEmpty()) {
+fun configureFacetByFlatArgsInfo(
+    kotlinFacet: KotlinFacet,
+    flatArgsInfo: FlatArgsInfo,
+    modelsProvider: IdeModifiableModelsProvider?,
+    skipCheck: Boolean = false
+) {
+    val currentCompilerArgumentsBucket = flatArgsInfo.currentCompilerArgumentsBucket
+    val defaultCompilerArgumentsBucket = flatArgsInfo.defaultCompilerArgumentsBucket
+    val converter = FlatToRawCompilerArgumentsBucketConverter(CommonCompilerArguments::class.java.classLoader)
+    val currentCompilerArguments = converter.convert(currentCompilerArgumentsBucket)
+    val defaultCompilerArguments = converter.convert(defaultCompilerArgumentsBucket)
+    val dependencyClasspath = flatArgsInfo.dependencyClasspath.map { PathUtil.toSystemIndependentName(it) }
+    if (skipCheck || currentCompilerArguments.isNotEmpty()) {
         parseCompilerArgumentsToFacet(currentCompilerArguments, defaultCompilerArguments, kotlinFacet, modelsProvider)
     }
     adjustClasspath(kotlinFacet, dependencyClasspath)
@@ -326,7 +332,9 @@ private fun getExplicitOutputPath(moduleNode: DataNode<ModuleData>, platformKind
         return null
     }
 
-    val k2jsArgumentList = moduleNode.compilerArgumentsBySourceSet?.get(sourceSet)?.currentArguments ?: return null
+    val k2jsArgumentList = moduleNode.flatCompilerArgumentBySourceSet?.get(sourceSet)?.currentCompilerArgumentsBucket?.let {
+        FlatToRawCompilerArgumentsBucketConverter(CommonCompilerArguments::class.java.classLoader).convert(it)
+    } ?: return null
     return K2JSCompilerArguments().apply { parseCommandLineArguments(k2jsArgumentList, this) }.outputFile
 }
 
