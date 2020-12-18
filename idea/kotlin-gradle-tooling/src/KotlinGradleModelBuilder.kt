@@ -20,26 +20,24 @@ import java.util.*
 
 interface KotlinGradleModel : Serializable {
     val hasKotlinPlugin: Boolean
-    val cachedCompilerArgumentsBySourceSet: CachedCompilerArgumentBySourceSet
+    val flatCompilerArgumentsBySourceSet: FlatCompilerArgumentBySourceSet
     val coroutines: String?
     val platformPluginId: String?
     val implements: List<String>
     val kotlinTarget: String?
     val kotlinTaskProperties: KotlinTaskPropertiesBySourceSet
     val gradleUserHome: String
-    val compilerArgumentsMapper: ICompilerArgumentsMapper
 }
 
 data class KotlinGradleModelImpl(
     override val hasKotlinPlugin: Boolean,
-    override val cachedCompilerArgumentsBySourceSet: CachedCompilerArgumentBySourceSet,
+    override val flatCompilerArgumentsBySourceSet: FlatCompilerArgumentBySourceSet,
     override val coroutines: String?,
     override val platformPluginId: String?,
     override val implements: List<String>,
     override val kotlinTarget: String? = null,
     override val kotlinTaskProperties: KotlinTaskPropertiesBySourceSet,
     override val gradleUserHome: String,
-    override val compilerArgumentsMapper: ICompilerArgumentsMapper
 ) : KotlinGradleModel
 
 abstract class AbstractKotlinGradleModelBuilder : ModelBuilderService {
@@ -77,10 +75,6 @@ abstract class AbstractKotlinGradleModelBuilder : ModelBuilderService {
 }
 
 class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
-    companion object {
-        private val modelBuilderMapper = CompilerArgumentsMapperWithCheckout()
-    }
-
 
     override fun getErrorMessageBuilder(project: Project, e: Exception): ErrorMessageBuilder {
         return ErrorMessageBuilder.create(project, e, "Gradle import errors")
@@ -143,17 +137,16 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
     }
 
     override fun buildAll(modelName: String?, project: Project): KotlinGradleModelImpl {
-        val modelDetachableMapper = modelBuilderMapper.checkoutMapper()
 
         val kotlinPluginId = kotlinPluginIds.singleOrNull { project.plugins.findPlugin(it) != null }
         val platformPluginId = platformPluginIds.singleOrNull { project.plugins.findPlugin(it) != null }
 
-        val cachedArgumentsBySourceSet = LinkedHashMap<String, CachedArgsInfo>()
+        val flatArgumentsBySourceSet = LinkedHashMap<String, FlatArgsInfo>()
         val extraProperties = HashMap<String, KotlinTaskProperties>()
 
         project.getAllTasks(false)[project]?.filter { it.javaClass.name in kotlinCompileTaskClasses }?.ifNotEmpty {
             val kotlinExt = project.extensions.getByName("kotlin")
-            val converter = RawToCachedCompilerArgumentsBucketConverter(kotlinExt::class.java.classLoader, modelDetachableMapper)
+            val converter = RawToFlatCompilerArgumentsBucketConverter(kotlinExt::class.java.classLoader)
 
             forEach { compileTask ->
                 val sourceSetName = compileTask.getSourceSetName()
@@ -170,12 +163,10 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
                 )
 
                 val dependencyClasspath = compileTask.getDependencyClasspath()
-                val dependencyClasspathCacheIds =
-                    dependencyClasspath.map { modelDetachableMapper.cacheArgument(it) }
-                cachedArgumentsBySourceSet[sourceSetName] = CachedArgsInfoImpl(
+                flatArgumentsBySourceSet[sourceSetName] = FlatArgsInfoImpl(
                     currentCompilerArgumentsBucket,
                     defaultCompilerArgumentsBucket,
-                    dependencyClasspathCacheIds
+                    dependencyClasspath
                 )
                 extraProperties.acknowledgeTask(compileTask, null)
             }
@@ -183,18 +174,15 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
         val platform = platformPluginId ?: pluginToPlatform.entries.singleOrNull { project.plugins.findPlugin(it.key) != null }?.value
         val implementedProjects = getImplementedProjects(project)
 
-        val detachedMapper = modelDetachableMapper.detach()
-
         return KotlinGradleModelImpl(
             kotlinPluginId != null || platformPluginId != null,
-            cachedArgumentsBySourceSet,
+            flatArgumentsBySourceSet,
             getCoroutines(project),
             platform,
             implementedProjects.map { it.pathOrName() },
             platform ?: kotlinPluginId,
             extraProperties,
-            project.gradle.gradleUserHomeDir.absolutePath,
-            detachedMapper
+            project.gradle.gradleUserHomeDir.absolutePath
         )
     }
 }

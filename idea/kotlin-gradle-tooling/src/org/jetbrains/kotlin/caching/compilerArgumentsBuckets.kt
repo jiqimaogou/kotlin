@@ -7,53 +7,34 @@ package org.jetbrains.kotlin.caching
 
 import java.io.Serializable
 
-typealias ClasspathArgumentCacheIdType = List<Int>
 typealias ClasspathArgumentsType = List<String>
 typealias RawCompilerArgumentsBucket = List<String>
 
 interface CompilerArgumentsBucket<T> : Serializable {
     var classpathParts: Pair<T, List<T>>?
-    val singleArguments: HashMap<T, T>
-    val multipleArguments: HashMap<T, List<T>>
-    val flagArguments: ArrayList<T>
-    val internalArguments: ArrayList<T>
-    val freeArgs: ArrayList<T>
-}
-
-class CachedCompilerArgumentsBucket(
-    override var classpathParts: Pair<Int, List<Int>>? = null,
-    override val singleArguments: HashMap<Int, Int> = hashMapOf(),
-    override val multipleArguments: HashMap<Int, List<Int>> = hashMapOf(),
-    override val flagArguments: ArrayList<Int> = arrayListOf(),
-    override val internalArguments: ArrayList<Int> = arrayListOf(),
-    override val freeArgs: ArrayList<Int> = arrayListOf()
-) : CompilerArgumentsBucket<Int> {
-    constructor(otherBucket: CachedCompilerArgumentsBucket) : this() {
-        classpathParts = otherBucket.classpathParts
-        singleArguments.putAll(otherBucket.singleArguments)
-        multipleArguments.putAll(otherBucket.multipleArguments)
-        flagArguments.addAll(otherBucket.flagArguments)
-        internalArguments.addAll(otherBucket.internalArguments)
-        freeArgs.addAll(otherBucket.freeArgs)
-    }
+    val singleArguments: MutableMap<T, T>
+    val multipleArguments: MutableMap<T, List<T>>
+    val flagArguments: MutableList<T>
+    val internalArguments: MutableList<T>
+    val freeArgs: MutableList<T>
 }
 
 class FlatCompilerArgumentsBucket(
     override var classpathParts: Pair<String, List<String>>? = null,
-    override val singleArguments: HashMap<String, String> = hashMapOf(),
-    override val multipleArguments: HashMap<String, List<String>> = hashMapOf(),
-    override val flagArguments: ArrayList<String> = arrayListOf(),
-    override val internalArguments: ArrayList<String> = arrayListOf(),
-    override val freeArgs: ArrayList<String> = arrayListOf()
+    override val singleArguments: MutableMap<String, String> = mutableMapOf(),
+    override val multipleArguments: MutableMap<String, List<String>> = mutableMapOf(),
+    override val flagArguments: MutableList<String> = mutableListOf(),
+    override val internalArguments: MutableList<String> = mutableListOf(),
+    override val freeArgs: MutableList<String> = mutableListOf()
 ) : CompilerArgumentsBucket<String> {
-    constructor(otherBucket: FlatCompilerArgumentsBucket) : this() {
-        classpathParts = otherBucket.classpathParts
-        singleArguments.putAll(otherBucket.singleArguments)
-        multipleArguments.putAll(otherBucket.multipleArguments)
-        flagArguments.addAll(otherBucket.flagArguments)
-        internalArguments.addAll(otherBucket.internalArguments)
-        freeArgs.addAll(otherBucket.freeArgs)
-    }
+    constructor(other: FlatCompilerArgumentsBucket) : this(
+        other.classpathParts,
+        other.singleArguments.toMutableMap(),
+        other.multipleArguments.toMutableMap(),
+        other.flagArguments.toMutableList(),
+        other.internalArguments.toMutableList(),
+        other.freeArgs.toMutableList()
+    )
 }
 
 val FlatCompilerArgumentsBucket.isEmpty: Boolean

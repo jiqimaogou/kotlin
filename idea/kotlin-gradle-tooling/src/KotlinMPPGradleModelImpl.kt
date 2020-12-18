@@ -6,10 +6,7 @@
 package org.jetbrains.kotlin.gradle
 
 import org.gradle.api.tasks.Exec
-import org.jetbrains.kotlin.caching.CachedArgsInfo
-import org.jetbrains.kotlin.caching.CachedArgsInfoImpl
-import org.jetbrains.kotlin.caching.CompilerArgumentsMapperWithMerge
-import org.jetbrains.kotlin.caching.ICompilerArgumentsMapper
+import org.jetbrains.kotlin.caching.*
 import java.io.File
 
 class KotlinSourceSetProto(
@@ -118,7 +115,7 @@ data class KotlinCompilationImpl(
     override val sourceSets: Collection<KotlinSourceSet>,
     override val dependencies: Array<KotlinDependencyId>,
     override val output: KotlinCompilationOutput,
-    override val cachedArgsInfo: CachedArgsInfo,
+    override val flatArgsInfo: FlatArgsInfo,
     override val kotlinTaskProperties: KotlinTaskProperties,
     override val nativeExtensions: KotlinNativeCompilationExtensions?
 ) : KotlinCompilation {
@@ -133,7 +130,7 @@ data class KotlinCompilationImpl(
         }.toList(),
         kotlinCompilation.dependencies,
         KotlinCompilationOutputImpl(kotlinCompilation.output),
-        CachedArgsInfoImpl(kotlinCompilation.cachedArgsInfo),
+        FlatArgsInfoImpl(kotlinCompilation.flatArgsInfo),
         KotlinTaskPropertiesImpl(kotlinCompilation.kotlinTaskProperties),
         kotlinCompilation.nativeExtensions?.let(::KotlinNativeCompilationExtensionsImpl)
     ) {
@@ -230,7 +227,6 @@ data class KotlinMPPGradleModelImpl(
     override val extraFeatures: ExtraFeatures,
     override val kotlinNativeHome: String,
     override val dependencyMap: Map<KotlinDependencyId, KotlinDependency>,
-    override val compilerArgumentsMapper: ICompilerArgumentsMapper
 ) : KotlinMPPGradleModel {
 
     constructor(mppModel: KotlinMPPGradleModel, cloningCache: MutableMap<Any, Any>) : this(
@@ -252,7 +248,6 @@ data class KotlinMPPGradleModelImpl(
         ),
         mppModel.kotlinNativeHome,
         mppModel.dependencyMap.map { it.key to it.value.deepCopy(cloningCache) }.toMap(),
-        CompilerArgumentsMapperWithMerge().apply { mergeMapper(mppModel.compilerArgumentsMapper) }
     )
 }
 

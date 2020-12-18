@@ -13,8 +13,7 @@ import java.lang.reflect.Proxy
 import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.full.memberProperties
 
-typealias CachedCompilerArgumentBySourceSet = Map<String, CachedArgsInfo>
-typealias FlatCompilerArgumentBySourceSet = MutableMap<String, FlatArgsInfo>
+typealias FlatCompilerArgumentBySourceSet = Map<String, FlatArgsInfo>
 
 private val ARGUMENT_ANNOTATION_CLASSES =
     setOf("org.jetbrains.kotlin.cli.common.arguments.Argument", "org.jetbrains.kotlin.com.sampullara.cli.Argument")

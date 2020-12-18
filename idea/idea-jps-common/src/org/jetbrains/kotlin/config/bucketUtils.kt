@@ -54,95 +54,67 @@ fun CommonCompilerArguments.toFlatCompilerArguments(): FlatCompilerArgumentsBuck
     val freeArgs = CommonCompilerArguments::freeArgs.invoke(this)
     val internalArguments = CommonCompilerArguments::internalArguments.invoke(this).map { it.stringRepresentation }
 
-    return FlatCompilerArgumentsBucket().apply {
-        classpathParts = classpathArguments
-        flagArguments.addAll(flatFlags)
-        this.singleArguments.putAll(singleArguments)
-        this.multipleArguments.putAll(multipleArguments)
-        this.freeArgs.addAll(freeArgs)
-        this.internalArguments.addAll(internalArguments)
-    }
+    return FlatCompilerArgumentsBucket(
+        classpathArguments,
+        singleArguments.toMutableMap(),
+        multipleArguments.toMutableMap(),
+        flatFlags.toMutableList(),
+        internalArguments.toMutableList(),
+        freeArgs.toMutableList()
+    )
 }
 
-fun <T : CommonToolArguments, R> KProperty1<T, R>.calculateArgumentAnnotation(): ArgumentAnnotationInfo? {
+fun <R> KProperty1<*, R>.calculateArgumentAnnotation(): ArgumentAnnotationInfo? {
     val argumentAnnotation = annotations.firstOrNull { it is Argument } as? Argument ?: return null
     return with(argumentAnnotation) { ArgumentAnnotationInfo(value, shortName, deprecatedName, delimiter, isAdvanced) }
 }
 
-fun <T : CommonToolArguments> FlatCompilerArgumentsBucket.extractSingleArgument(
-    property: KMutableProperty1<T, String?>
+fun FlatCompilerArgumentsBucket.extractSingleNullableArgument(
+    property: KMutableProperty1<*, String?>
 ): Pair<String, String>? {
     val argumentAnnotationInfo = property.calculateArgumentAnnotation() ?: return null
     return singleArguments.entries.firstOrNull { argumentAnnotationInfo.isSuitableValue(it.key) }?.toPair()
 }
 
-fun <T : CommonToolArguments> FlatCompilerArgumentsBucket.extractSingleArgumentValue(
-    property: KMutableProperty1<T, String?>
-): String? = extractSingleArgument(property)?.second
+fun FlatCompilerArgumentsBucket.extractSingleNullableArgumentValue(
+    property: KMutableProperty1<*, String?>
+): String? = extractSingleNullableArgument(property)?.second
 
-fun <T : CommonToolArguments> FlatCompilerArgumentsBucket.setSingleArgument(
-    property: KMutableProperty1<T, String?>,
-    newValue: String?
-) {
-    val argumentAnnotationInfo = property.calculateArgumentAnnotation() ?: return
-    val oldValue = extractSingleArgument(property)
-    if (newValue == oldValue?.second) return
-    oldValue?.first?.let { singleArguments.remove(it) }
-    newValue?.also { singleArguments[argumentAnnotationInfo.value] = it }
+fun FlatCompilerArgumentsBucket.extractSingleArgument(
+    property: KMutableProperty1<*, String>
+): Pair<String, String>? {
+    val argumentAnnotationInfo = property.calculateArgumentAnnotation() ?: return null
+    return singleArguments.entries.firstOrNull { argumentAnnotationInfo.isSuitableValue(it.key) }?.toPair()
 }
 
-fun <T : CommonToolArguments> FlatCompilerArgumentsBucket.extractMultipleArgument(
-    property: KMutableProperty1<T, Array<String>?>
+fun FlatCompilerArgumentsBucket.extractSingleArgumentValue(
+    property: KMutableProperty1<*, String>
+): String? = extractSingleArgument(property)?.second
+
+fun FlatCompilerArgumentsBucket.extractMultipleArgument(
+    property: KMutableProperty1<*, Array<String>?>
 ): Pair<String, Array<String>>? {
     val argumentAnnotationInfo = property.calculateArgumentAnnotation() ?: return null
     return multipleArguments.entries.firstOrNull { argumentAnnotationInfo.isSuitableValue(it.key) }
         ?.let { it.key to it.value.toTypedArray() }
 }
 
-fun <T : CommonToolArguments> FlatCompilerArgumentsBucket.extractMultipleArgumentValue(
-    property: KMutableProperty1<T, Array<String>?>
+fun FlatCompilerArgumentsBucket.extractMultipleArgumentValue(
+    property: KMutableProperty1<*, Array<String>?>
 ): Array<String>? = extractMultipleArgument(property)?.second
 
-fun <T : CommonToolArguments> FlatCompilerArgumentsBucket.setMultipleArgument(
-    property: KMutableProperty1<T, Array<String>?>,
-    newValue: Array<String>?
-) {
-    val argumentAnnotationInfo = property.calculateArgumentAnnotation() ?: return
-    val oldValue = extractMultipleArgument(property)
-    if (newValue.contentEquals(oldValue?.second)) return
-    oldValue?.first?.let { multipleArguments.remove(it) }
-    newValue?.also { multipleArguments[argumentAnnotationInfo.value] = it.toList() }
-}
-
-fun <T : CommonToolArguments> FlatCompilerArgumentsBucket.extractFlagArgument(
-    property: KMutableProperty1<T, Boolean>
-): Pair<String, Boolean> {
-    val argumentAnnotationInfo = property.calculateArgumentAnnotation()!!
+fun FlatCompilerArgumentsBucket.extractFlagArgument(
+    property: KMutableProperty1<*, Boolean>
+): Pair<String, Boolean>? {
+    val argumentAnnotationInfo = property.calculateArgumentAnnotation() ?: return null
     return flagArguments.firstOrNull { argumentAnnotationInfo.isSuitableValue(it) }?.let { it to true }
         ?: argumentAnnotationInfo.value to false
 }
 
-fun <T : CommonToolArguments> FlatCompilerArgumentsBucket.extractFlagArgumentValue(
-    property: KMutableProperty1<T, Boolean>
-): Boolean = extractFlagArgument(property).second
-
-fun <T : CommonToolArguments> FlatCompilerArgumentsBucket.setFlagArgument(
-    property: KMutableProperty1<T, Boolean>,
-    newValue: Boolean
-) {
-    val argumentAnnotationInfo = property.calculateArgumentAnnotation() ?: return
-    val oldValue = extractFlagArgument(property)
-    if (newValue == oldValue.second) return
-    flagArguments.remove(oldValue.first)
-    if (newValue) flagArguments.add(argumentAnnotationInfo.value)
-}
+fun FlatCompilerArgumentsBucket.extractFlagArgumentValue(
+    property: KMutableProperty1<*, Boolean>
+): Boolean? = extractFlagArgument(property)?.second
 
 fun FlatCompilerArgumentsBucket.extractClasspaths(): List<String>? = classpathParts?.second
 
 fun FlatCompilerArgumentsBucket.extractClasspathJoined(): String? = classpathParts?.second?.joinToString(File.pathSeparator)
-
-fun FlatCompilerArgumentsBucket.setClasspathArgument(newClasspaths: List<String>) {
-    classpathParts = classpathParts?.let {
-        it.first to newClasspaths
-    } ?: newClasspaths.ifNotEmpty { K2JVMCompilerArguments::classpath.calculateArgumentAnnotation()!!.value to this }
-}

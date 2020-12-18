@@ -58,11 +58,10 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
             SourceSetCachedFinder(project)
         )
         val dependencyMapper = KotlinDependencyMapper()
-        val modelDetachableMapper = modelBuilderMapper.checkoutMapper()
         val sourceSets = buildSourceSets(dependencyResolver, project, dependencyMapper) ?: return null
         val sourceSetMap = sourceSets.map { it.name to it }.toMap()
         val targets =
-            buildTargets(projectTargets, sourceSetMap, dependencyResolver, project, dependencyMapper, modelDetachableMapper) ?: return null
+            buildTargets(projectTargets, sourceSetMap, dependencyResolver, project, dependencyMapper) ?: return null
         computeSourceSetsDeferredInfo(sourceSetMap, targets, isHMPPEnabled(project), shouldCoerceRootSourceSetToCommon(project))
         val coroutinesState = getCoroutinesState(project)
         reportUnresolvedDependencies(targets)
@@ -73,8 +72,7 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
             targets,
             ExtraFeaturesImpl(coroutinesState, isHMPPEnabled(project), isNativeDependencyPropagationEnabled(project)),
             kotlinNativeHome,
-            dependencyMapper.toDependencyMap(),
-            modelDetachableMapper.detach()
+            dependencyMapper.toDependencyMap()
         )
     }
 
@@ -313,12 +311,11 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
         sourceSetMap: Map<String, KotlinSourceSet>,
         dependencyResolver: DependencyResolver,
         project: Project,
-        dependencyMapper: KotlinDependencyMapper,
-        compilerArgumentsMapper: ICompilerArgumentsMapper
+        dependencyMapper: KotlinDependencyMapper
     ): Collection<KotlinTarget>? {
         val isHMPPEnabled = isHMPPEnabled(project)
         return projectTargets.mapNotNull {
-            buildTarget(it, sourceSetMap, dependencyResolver, project, dependencyMapper, isHMPPEnabled, compilerArgumentsMapper)
+            buildTarget(it, sourceSetMap, dependencyResolver, project, dependencyMapper, isHMPPEnabled)
         }
     }
 
@@ -379,8 +376,7 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
         dependencyResolver: DependencyResolver,
         project: Project,
         dependencyMapper: KotlinDependencyMapper,
-        isHMPPEnabled: Boolean,
-        compilerArgumentsMapper: ICompilerArgumentsMapper
+        isHMPPEnabled: Boolean
     ): KotlinTarget? {
         val targetClass = gradleTarget.javaClass
         val getPlatformType = targetClass.getMethodOrNull("getPlatformType") ?: return null
@@ -412,8 +408,7 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
                 sourceSetMap,
                 dependencyResolver,
                 project,
-                dependencyMapper,
-                compilerArgumentsMapper
+                dependencyMapper
             )
             if (compilation == null || platform != KotlinPlatform.ANDROID) {
                 compilation
@@ -463,7 +458,7 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
             this.sourceSets.union(dependsOnSourceSets),
             this.dependencies,
             this.output,
-            this.cachedArgsInfo,
+            this.flatArgsInfo,
             this.kotlinTaskProperties,
             this.nativeExtensions
         )
@@ -581,8 +576,7 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
         sourceSetMap: Map<String, KotlinSourceSet>,
         dependencyResolver: DependencyResolver,
         project: Project,
-        dependencyMapper: KotlinDependencyMapper,
-        compilerArgumentsMapper: ICompilerArgumentsMapper
+        dependencyMapper: KotlinDependencyMapper
     ): KotlinCompilationImpl? {
         val compilationClass = gradleCompilation.javaClass
         val getKotlinSourceSets = compilationClass.getMethodOrNull("getKotlinSourceSets") ?: return null
@@ -593,8 +587,8 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
         val kotlinSourceSets = kotlinGradleSourceSets.mapNotNull { sourceSetMap[it.name] }
         val compileKotlinTask = getCompileKotlinTaskName(project, gradleCompilation) ?: return null
         val output = buildCompilationOutput(gradleCompilation, compileKotlinTask) ?: return null
-        val compilationCachedArgsInfo = buildCachedArgsInfo(kotlinExt::class.java.classLoader, compileKotlinTask, compilerArgumentsMapper)
-            ?: buildCachedArgsInfoUnsafe(kotlinExt::class.java.classLoader, compileKotlinTask, compilerArgumentsMapper)
+        val compilationFlatArgsInfo = buildFlatArgsInfo(kotlinExt::class.java.classLoader, compileKotlinTask)
+            ?: buildFlatArgsInfoUnsafe(kotlinExt::class.java.classLoader, compileKotlinTask)
             ?: return null
         val dependencies =
             buildCompilationDependencies(gradleCompilation, classifier, sourceSetMap, dependencyResolver, project, dependencyMapper)
@@ -614,7 +608,7 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
             kotlinSourceSets,
             dependencies.map { dependencyMapper.getId(it) }.distinct().toTypedArray(),
             output,
-            compilationCachedArgsInfo,
+            compilationFlatArgsInfo,
             kotlinTaskProperties,
             nativeExtensions
         )
@@ -766,18 +760,17 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
         null
     } ?: emptyList()
 
-    private fun buildCachedArgsInfoUnsafe(
+    private fun buildFlatArgsInfoUnsafe(
         classLoader: ClassLoader,
         compileKotlinTask: Task,
-        compilerArgumentsMapper: ICompilerArgumentsMapper
-    ): CachedArgsInfo? {
+    ): FlatArgsInfo? {
         val compilationArguments = buildCompilationArgumentsUnsafe(compileKotlinTask) ?: return null
-        val converter = RawToCachedCompilerArgumentsBucketConverter(classLoader, compilerArgumentsMapper)
+        val converter = RawToFlatCompilerArgumentsBucketConverter(classLoader)
         val dependencyClasspath = buildDependencyClasspath(compileKotlinTask)
-        return CachedArgsInfoImpl(
+        return FlatArgsInfoImpl(
             converter.convert(compilationArguments.currentArguments.toList()),
             converter.convert(compilationArguments.defaultArguments.toList()),
-            dependencyClasspath.map { compilerArgumentsMapper.cacheArgument(it) }
+            dependencyClasspath
         )
     }
 
@@ -790,23 +783,22 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
         return KotlinCompilationArgumentsImpl(defaultArguments.toTypedArray(), currentArguments.toTypedArray())
     }
 
-    private fun buildCachedArgsInfo(
+    private fun buildFlatArgsInfo(
         classLoader: ClassLoader,
         compileKotlinTask: Task,
-        compilerArgumentsMapper: ICompilerArgumentsMapper
-    ): CachedArgsInfo? {
+    ): FlatArgsInfo? {
         val compileTaskClass = compileKotlinTask.javaClass
-        val converter = RawToCachedCompilerArgumentsBucketConverter(classLoader, compilerArgumentsMapper)
-        val currentCachedArgumentsBucket = compileTaskClass.getMethodOrNull("getSerializedCompilerArguments")
+        val converter = RawToFlatCompilerArgumentsBucketConverter(classLoader)
+        val currentFlatArgumentsBucket = compileTaskClass.getMethodOrNull("getSerializedCompilerArguments")
             ?.let { safelyGetArguments(compileKotlinTask, it) }
             ?.let { converter.convert(it) }
             ?: return null
-        val defaultCachedArgumentsBucket = compileTaskClass.getMethodOrNull("getDefaultSerializedCompilerArguments")
+        val defaultFlatArgumentsBucket = compileTaskClass.getMethodOrNull("getDefaultSerializedCompilerArguments")
             ?.let { safelyGetArguments(compileKotlinTask, it) }
             ?.let { converter.convert(it) }
-            ?: CachedCompilerArgumentsBucket()
-        val cachedDependencyClasspath = buildDependencyClasspath(compileKotlinTask).map { cp -> compilerArgumentsMapper.cacheArgument(cp) }
-        return CachedArgsInfoImpl(currentCachedArgumentsBucket, defaultCachedArgumentsBucket, cachedDependencyClasspath)
+            ?: FlatCompilerArgumentsBucket()
+        val dependencyClasspath = buildDependencyClasspath(compileKotlinTask)
+        return FlatArgsInfoImpl(currentFlatArgumentsBucket, defaultFlatArgumentsBucket, dependencyClasspath)
     }
 
     private fun buildDependencyClasspath(compileKotlinTask: Task): List<String> {
@@ -1036,7 +1028,6 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
 
     companion object {
         private val logger = Logging.getLogger(KotlinMPPGradleModelBuilder::class.java)
-        private val modelBuilderMapper = CompilerArgumentsMapperWithCheckout()
 
         fun Project.getTargets(): Collection<Named>? {
             val kotlinExt = project.extensions.findByName("kotlin") ?: return null

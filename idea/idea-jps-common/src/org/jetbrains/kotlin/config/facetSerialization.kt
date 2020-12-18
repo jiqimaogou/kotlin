@@ -5,6 +5,7 @@
 
 package org.jetbrains.kotlin.config
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.PathUtil
 import com.intellij.util.xmlb.SerializationFilter
 import com.intellij.util.xmlb.SkipDefaultsSerializationFilter
@@ -23,6 +24,7 @@ import org.jetbrains.kotlin.platform.js.isJs
 import org.jetbrains.kotlin.platform.jvm.JdkPlatform
 import org.jetbrains.kotlin.platform.jvm.isJvm
 import org.jetbrains.kotlin.platform.konan.*
+import org.jetbrains.kotlin.utils.addToStdlib.cast
 import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 import java.lang.reflect.Modifier
 import kotlin.reflect.KClass
@@ -596,22 +598,31 @@ private fun FlatCompilerArgumentsBucket.writeCompilerArgumentsBucket(
 }
 
 fun FlatCompilerArgumentsBucket.toCompilerArguments(targetPlatform: TargetPlatform): CommonCompilerArguments =
-    targetPlatform.createArguments {
-        val properties = this::class.java.kotlin.memberProperties.mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, *>>() }
-        val infos =
-            DividedPropertiesWithArgumentAnnotationInfoManager(this::class.java.classLoader).dividedPropertiesWithArgumentAnnotationInfo
+    targetPlatform.createArguments().apply {
+        val properties = this::class.java.kotlin.memberProperties
+            .filter { it.calculateArgumentAnnotation() != null }
 
-        infos.singlePropertiesToArgumentAnnotation.keys.filter { it in properties }
-            .forEach { k -> extractSingleArgumentValue(k)?.also { k.set(this@createArguments, it) } }
+        properties.filter { it.returnType.let { rt -> rt.classifier == String::class && rt.isMarkedNullable } }
+            .mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, String?>>() }
+            .forEach { k -> extractSingleNullableArgumentValue(k)?.also { k.set(this, it) } }
 
-        infos.multiplePropertiesToArgumentAnnotation.keys.filter { it in properties }
-            .forEach { k -> extractMultipleArgumentValue(k)?.also { k.set(this@createArguments, it) } }
+        properties.filter { it.returnType.let { rt -> rt.classifier == String::class && !rt.isMarkedNullable } }
+            .mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, String>>() }
+            .forEach { k -> extractSingleArgumentValue(k)?.also { k.set(this, it) } }
 
-        infos.flagPropertiesToArgumentAnnotation.keys.filter { it in properties }
-            .forEach { k -> extractFlagArgumentValue(k).also { k.set(this@createArguments, it) } }
 
-        infos.classpathPropertiesToArgumentAnnotation.keys.filter { it in properties }
-            .firstOrNull()?.also { k -> extractClasspathJoined()?.also { k.set(this@createArguments, it) } }
+        properties.filter { (it.returnType.classifier as? KClass<*>)?.java?.isArray == true }
+            .mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, Array<String>?>>() }
+            .forEach { k -> extractMultipleArgumentValue(k)?.also { k.set(this, it) } }
+
+        properties.filter { it.returnType.classifier == Boolean::class }
+            .mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, Boolean>>() }
+            .forEach { k -> extractFlagArgumentValue(k)?.also { k.set(this, it) } }
+
+        when (this) {
+            is K2JVMCompilerArguments -> classpath = extractClasspathJoined()
+            is K2MetadataCompilerArguments -> classpath = extractClasspathJoined()
+        }
 
         freeArgs = this@toCompilerArguments.freeArgs
         val parser = LanguageSettingsParser()

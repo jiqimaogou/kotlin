@@ -328,7 +328,7 @@ private fun getExplicitOutputPath(moduleNode: DataNode<ModuleData>, platformKind
     }
 
     return moduleNode.flatCompilerArgumentBySourceSet?.get(sourceSet)?.currentCompilerArgumentsBucket
-        ?.extractSingleArgumentValue(K2JSCompilerArguments::outputFile)
+        ?.extractSingleNullableArgumentValue(K2JSCompilerArguments::outputFile)
 }
 
 internal fun adjustClasspath(kotlinFacet: KotlinFacet, dependencyClasspath: List<String>) {

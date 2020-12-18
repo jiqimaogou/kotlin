@@ -258,39 +258,22 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
             }
         }
 
-        private fun KotlinMPPGradleModel.mergeMapper(ideModule: DataNode<ModuleData>) = ideModule.getDataNode(ProjectKeys.PROJECT)!!.also {
-            it.mppProjectCompilerArgumentsMapper.mergeMapper(compilerArgumentsMapper)
-        }
-
         private fun KotlinMPPGradleModel.populateSourceSetsWithCompilerArguments(
-            ideModule: DataNode<ModuleData>,
-            ideProject: DataNode<ProjectData>
+            ideModule: DataNode<ModuleData>
         ) {
 
             val compilations = targets.flatMap { it.compilations }
-            val mppMapper = ideProject.mppProjectCompilerArgumentsMapper ?: return
             for (compilation in compilations) {
                 val kotlinSourceSetInfo = ideModule.kotlinSourceSetInfoByCompilation[compilation] ?: continue
-                val flatArgsInfo = compilation.cachedArgsInfo.convertToFlat(mppMapper)
+                val flatArgsInfo = compilation.flatArgsInfo
                 kotlinSourceSetInfo.flatArgsInfo = flatArgsInfo
 
                 if (compilation.platform == KotlinPlatform.JVM || compilation.platform == KotlinPlatform.ANDROID) {
                     ideModule.compilationDataByCompilation[compilation]?.targetCompatibility =
-                        flatArgsInfo.currentCompilerArgumentsBucket.extractSingleArgumentValue(K2JVMCompilerArguments::jvmTarget)
+                        flatArgsInfo.currentCompilerArgumentsBucket.extractSingleNullableArgumentValue(K2JVMCompilerArguments::jvmTarget)
                 }
 
             }
-        }
-
-        fun <T : CommonToolArguments> CachedCompilerArgumentsBucket.extractGeneralArgument(
-            property: KProperty1<T, *>,
-            mapper: CompilerArgumentsMapper
-        ): String? {
-            val argumentAnnotation = property.annotations.firstOrNull { it is Argument } as? Argument ?: return null
-            val info = with(argumentAnnotation) { ArgumentAnnotationInfo(value, shortName, deprecatedName, delimiter, isAdvanced) }
-            val cacheMapping = mapper.copyCache()
-            val key = cacheMapping.entries.firstOrNull { info.isSuitableValue(it.value) }?.key
-            return singleArguments[key]?.let { mapper.getArgument(it) }
         }
 
         fun initializeModuleData(
@@ -546,9 +529,6 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
             resolverCtx: ProjectResolverContext
         ) {
             val mppModel = resolverCtx.getMppModel(gradleModule) ?: return
-            with(mppModel) {
-                mergeMapper(ideModule)
-            }
             val sourceSetToPackagePrefix = mppModel.targets.flatMap { it.compilations }
                 .flatMap { compilation ->
                     compilation.sourceSets.map { sourceSet -> sourceSet.name to compilation.kotlinTaskProperties.packagePrefix }
@@ -614,7 +594,7 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
             resolverCtx: ProjectResolverContext
         ) {
             val mppModel = resolverCtx.getMppModel(gradleModule) ?: return
-            mppModel.populateSourceSetsWithCompilerArguments(ideModule, ideProject)
+            mppModel.populateSourceSetsWithCompilerArguments(ideModule)
             mppModel.dependencyMap.values.modifyDependenciesOnMppModules(ideProject, resolverCtx)
             val sourceSetMap = ideProject.getUserData(GradleProjectResolver.RESOLVED_SOURCE_SETS) ?: return
             val artifactsMap = ideProject.getUserData(CONFIGURATION_ARTIFACTS) ?: return
@@ -1049,7 +1029,7 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
                         it.pluginOptions = languageSettings.compilerPluginArguments
                         it.pluginClasspaths = languageSettings.compilerPluginClasspath.map(File::getPath).toTypedArray()
                         it.freeArgs = languageSettings.freeCompilerArgs.toMutableList()
-                    }.toFlatCompilerArguments().let { FlatArgsInfoImpl(it) }
+                    }.toFlatCompilerArguments().let { FlatArgsInfoImpl(it, FlatCompilerArgumentsBucket(), emptyList()) }
             }
         }
 

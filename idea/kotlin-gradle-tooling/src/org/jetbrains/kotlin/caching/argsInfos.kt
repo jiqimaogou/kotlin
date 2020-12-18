@@ -20,9 +20,9 @@ interface FlatArgsInfo : IArgsInfo<String, FlatCompilerArgumentsBucket> {
 }
 
 class FlatArgsInfoImpl(
-    override val currentCompilerArgumentsBucket: FlatCompilerArgumentsBucket = FlatCompilerArgumentsBucket(),
-    override val defaultCompilerArgumentsBucket: FlatCompilerArgumentsBucket = FlatCompilerArgumentsBucket(),
-    override val dependencyClasspath: ClasspathArgumentsType = emptyList()
+    override val currentCompilerArgumentsBucket: FlatCompilerArgumentsBucket,
+    override val defaultCompilerArgumentsBucket: FlatCompilerArgumentsBucket,
+    override val dependencyClasspath: ClasspathArgumentsType
 ) : FlatArgsInfo {
     constructor(flatArgsInfo: FlatArgsInfo) : this(
         FlatCompilerArgumentsBucket(flatArgsInfo.currentCompilerArgumentsBucket),
@@ -30,29 +30,3 @@ class FlatArgsInfoImpl(
         flatArgsInfo.dependencyClasspath.toList()
     )
 }
-
-interface CachedArgsInfo : IArgsInfo<Int, CachedCompilerArgumentsBucket> {
-    override val currentCompilerArgumentsBucket: CachedCompilerArgumentsBucket
-    override val defaultCompilerArgumentsBucket: CachedCompilerArgumentsBucket
-    override val dependencyClasspath: ClasspathArgumentCacheIdType
-}
-
-class CachedArgsInfoImpl(
-    override val currentCompilerArgumentsBucket: CachedCompilerArgumentsBucket = CachedCompilerArgumentsBucket(),
-    override val defaultCompilerArgumentsBucket: CachedCompilerArgumentsBucket = CachedCompilerArgumentsBucket(),
-    override val dependencyClasspath: ClasspathArgumentCacheIdType = emptyList()
-) : CachedArgsInfo {
-    constructor(cachedArgsInfo: CachedArgsInfo) : this(
-        CachedCompilerArgumentsBucket(cachedArgsInfo.currentCompilerArgumentsBucket),
-        CachedCompilerArgumentsBucket(cachedArgsInfo.defaultCompilerArgumentsBucket),
-        cachedArgsInfo.dependencyClasspath.toList()
-    )
-}
-
-fun CachedArgsInfo.convertToFlat(mapper: ICompilerArgumentsMapper): FlatArgsInfo =
-    CachedToFlatCompilerArgumentsBucketConverter(mapper).let { cv ->
-        FlatArgsInfoImpl(
-            cv.convert(currentCompilerArgumentsBucket),
-            cv.convert(defaultCompilerArgumentsBucket),
-            dependencyClasspath.map { mapper.getArgument(it) })
-    }

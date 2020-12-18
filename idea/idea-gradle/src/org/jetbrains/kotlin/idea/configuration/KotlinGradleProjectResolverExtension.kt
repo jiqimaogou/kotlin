@@ -71,11 +71,6 @@ var DataNode<out ModuleData>.dependenciesCache
         )
 var DataNode<out ModuleData>.pureKotlinSourceFolders
         by NotNullableCopyableDataNodeUserDataProperty(Key.create<List<String>>("PURE_KOTLIN_SOURCE_FOLDER"), emptyList())
-var DataNode<ProjectData>.projectCompilerArgumentsMapper
-        by NotNullableCopyableDataNodeUserDataProperty(Key.create("COMPILER_ARGUMENT_MAPPER"), CompilerArgumentsMapperWithMerge())
-
-var DataNode<ProjectData>.mppProjectCompilerArgumentsMapper
-        by NotNullableCopyableDataNodeUserDataProperty(Key.create("MPP_COMPILER_ARGUMENT_MAPPER"), CompilerArgumentsMapperWithMerge())
 
 class KotlinGradleProjectResolverExtension : AbstractProjectResolverExtension() {
     val isAndroidProjectKey = Key.findKeyByName("IS_ANDROID_PROJECT_KEY")
@@ -236,9 +231,7 @@ class KotlinGradleProjectResolverExtension : AbstractProjectResolverExtension() 
 
         ideModule.isResolved = true
         ideModule.hasKotlinPlugin = gradleModel.hasKotlinPlugin
-        gradleModel.cachedCompilerArgumentsBySourceSet
-            .map { it.key to it.value.convertToFlat(ideProject.projectCompilerArgumentsMapper) }
-            .forEach { (k, v) -> ideModule.flatCompilerArgumentBySourceSet[k] = v }
+        ideModule.flatCompilerArgumentBySourceSet = gradleModel.flatCompilerArgumentsBySourceSet
 
         ideModule.coroutines = gradleModel.coroutines
         ideModule.platformPluginId = gradleModel.platformPluginId
@@ -313,13 +306,6 @@ class KotlinGradleProjectResolverExtension : AbstractProjectResolverExtension() 
                     gradleModelPureKotlinSourceFolders
                 else
                     gradleModelPureKotlinSourceFolders + ideModule.pureKotlinSourceFolders
-
-            with(gradleModel.compilerArgumentsMapper) {
-                val ideProject = ideModule.getDataNode(ProjectKeys.PROJECT)!!
-                ideProject.projectCompilerArgumentsMapper.mergeMapper(this)
-                clear()
-            }
-
 
             val gradleSourceSets = ideModule.children.filter { it.data is GradleSourceSetData } as Collection<DataNode<GradleSourceSetData>>
             for (gradleSourceSetNode in gradleSourceSets) {
