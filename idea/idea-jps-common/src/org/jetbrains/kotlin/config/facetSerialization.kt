@@ -9,15 +9,12 @@ import com.intellij.util.PathUtil
 import com.intellij.util.xmlb.SerializationFilter
 import com.intellij.util.xmlb.SkipDefaultsSerializationFilter
 import com.intellij.util.xmlb.XmlSerializer
-import com.jetbrains.rd.util.firstOrNull
 import org.jdom.DataConversionException
 import org.jdom.Element
 import org.jdom.Text
 import org.jetbrains.kotlin.caching.DividedPropertiesWithArgumentAnnotationInfoManager
 import org.jetbrains.kotlin.caching.FlatCompilerArgumentsBucket
-import org.jetbrains.kotlin.caching.isSuitableValue
 import org.jetbrains.kotlin.cli.common.arguments.*
-import org.jetbrains.kotlin.konan.file.File
 import org.jetbrains.kotlin.load.java.JvmAbi
 import org.jetbrains.kotlin.platform.*
 import org.jetbrains.kotlin.platform.impl.FakeK2NativeCompilerArguments
@@ -26,10 +23,10 @@ import org.jetbrains.kotlin.platform.js.isJs
 import org.jetbrains.kotlin.platform.jvm.JdkPlatform
 import org.jetbrains.kotlin.platform.jvm.isJvm
 import org.jetbrains.kotlin.platform.konan.*
-import org.jetbrains.kotlin.utils.addToStdlib.runIf
+import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 import java.lang.reflect.Modifier
 import kotlin.reflect.KClass
-import kotlin.reflect.full.declaredMemberProperties
+import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.full.memberProperties
 import kotlin.reflect.full.superclasses
 
@@ -514,50 +511,6 @@ private fun String?.deserializeTargetPlatformByComponentPlatforms(): TargetPlatf
     }
 }
 
-private fun CommonCompilerArguments.convertToFlatBucket(): FlatCompilerArgumentsBucket = FlatCompilerArgumentsBucket().also { bucket ->
-    val properties = this::class.java.kotlin.memberProperties
-    val infos = DividedPropertiesWithArgumentAnnotationInfoManager(this::class.java.classLoader).dividedPropertiesWithArgumentAnnotationInfo
-
-    infos.singlePropertiesToArgumentAnnotation.filterKeys { it in properties }
-        .forEach { (k, v) -> k.get(this)?.also { bucket.singleArguments[v.value] = it } }
-
-    infos.multiplePropertiesToArgumentAnnotation.filterKeys { it in properties }
-        .forEach { (k, v) -> k.get(this)?.also { bucket.multipleArguments[v.value] = it.toList() } }
-
-    infos.flagPropertiesToArgumentAnnotation.filterKeys { it in properties }
-        .forEach { (k, v) -> runIf(k.get(this)) { bucket.flagArguments += v.value } }
-
-    infos.classpathPropertiesToArgumentAnnotation.filterKeys { it in properties }
-        .firstOrNull()?.also { (k, v) -> k.get(this)?.also { bucket.classpathParts = v.value to it.split(File.pathSeparator) } }
-
-    bucket.freeArgs += freeArgs
-    bucket.internalArguments += internalArguments.map { it.stringRepresentation }
-}
-
-private fun FlatCompilerArgumentsBucket.toCompilerArguments(targetPlatform: TargetPlatform): CommonCompilerArguments =
-    targetPlatform.createArguments {
-        val properties = this::class.java.kotlin.memberProperties
-        val infos =
-            DividedPropertiesWithArgumentAnnotationInfoManager(this::class.java.classLoader).dividedPropertiesWithArgumentAnnotationInfo
-
-        infos.singlePropertiesToArgumentAnnotation.filterKeys { it in properties }
-            .forEach { (k, _) -> extractSingleArgumentValue(k).also { k.set(this@createArguments, it) } }
-
-        infos.multiplePropertiesToArgumentAnnotation.filterKeys { it in properties }
-            .forEach { (k, _) -> extractMultipleArgumentValue(k).also { k.set(this@createArguments, it) } }
-
-        infos.flagPropertiesToArgumentAnnotation.filterKeys { it in properties }
-            .forEach { (k, _) -> extractFlagArgumentValue(k).also { k.set(this@createArguments, it) } }
-
-        infos.classpathPropertiesToArgumentAnnotation.filterKeys { it in properties }
-            .firstOrNull()?.also { (k, v) -> extractClasspathJoined().also { k.set(this@createArguments, it) } }
-
-        freeArgs = this@toCompilerArguments.freeArgs
-        val parser = LanguageSettingsParser()
-        val errors = errors ?: ArgumentParseErrors().also { errors = it }
-        internalArguments = this@toCompilerArguments.internalArguments.mapNotNull { parser.parseInternalArgument(it, errors) }
-    }
-
 private fun readCompilerArgumentsBucket(element: Element): FlatCompilerArgumentsBucket? {
     element.getChild("compilerArgumentsBucket")?.let { bucketElement ->
         val classpathKey = bucketElement.getAttributeValue("classpathKey")
@@ -641,3 +594,27 @@ private fun FlatCompilerArgumentsBucket.writeCompilerArgumentsBucket(
     element.addContent(bucketElement)
     return bucketElement
 }
+
+fun FlatCompilerArgumentsBucket.toCompilerArguments(targetPlatform: TargetPlatform): CommonCompilerArguments =
+    targetPlatform.createArguments {
+        val properties = this::class.java.kotlin.memberProperties.mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, *>>() }
+        val infos =
+            DividedPropertiesWithArgumentAnnotationInfoManager(this::class.java.classLoader).dividedPropertiesWithArgumentAnnotationInfo
+
+        infos.singlePropertiesToArgumentAnnotation.keys.filter { it in properties }
+            .forEach { k -> extractSingleArgumentValue(k)?.also { k.set(this@createArguments, it) } }
+
+        infos.multiplePropertiesToArgumentAnnotation.keys.filter { it in properties }
+            .forEach { k -> extractMultipleArgumentValue(k)?.also { k.set(this@createArguments, it) } }
+
+        infos.flagPropertiesToArgumentAnnotation.keys.filter { it in properties }
+            .forEach { k -> extractFlagArgumentValue(k).also { k.set(this@createArguments, it) } }
+
+        infos.classpathPropertiesToArgumentAnnotation.keys.filter { it in properties }
+            .firstOrNull()?.also { k -> extractClasspathJoined()?.also { k.set(this@createArguments, it) } }
+
+        freeArgs = this@toCompilerArguments.freeArgs
+        val parser = LanguageSettingsParser()
+        val errors = errors ?: ArgumentParseErrors().also { errors = it }
+        internalArguments = this@toCompilerArguments.internalArguments.mapNotNull { parser.parseInternalArgument(it, errors) }
+    }

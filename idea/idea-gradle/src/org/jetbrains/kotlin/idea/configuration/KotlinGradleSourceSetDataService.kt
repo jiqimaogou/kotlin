@@ -34,11 +34,9 @@ import com.intellij.openapi.roots.libraries.Library
 import com.intellij.openapi.util.Key
 import com.intellij.util.PathUtil
 import org.jetbrains.kotlin.caching.FlatArgsInfo
-import org.jetbrains.kotlin.caching.FlatToRawCompilerArgumentsBucketConverter
-import org.jetbrains.kotlin.cli.common.arguments.CommonCompilerArguments
+import org.jetbrains.kotlin.caching.isEmpty
 import org.jetbrains.kotlin.cli.common.arguments.K2JSCompilerArguments
 import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
-import org.jetbrains.kotlin.cli.common.arguments.parseCommandLineArguments
 import org.jetbrains.kotlin.config.*
 import org.jetbrains.kotlin.extensions.ProjectExtensionDescriptor
 import org.jetbrains.kotlin.ide.konan.NativeLibraryKind
@@ -315,15 +313,12 @@ fun configureFacetByFlatArgsInfo(
     modelsProvider: IdeModifiableModelsProvider?,
     skipCheck: Boolean = false
 ) {
-    val currentCompilerArgumentsBucket = flatArgsInfo.currentCompilerArgumentsBucket
-    val defaultCompilerArgumentsBucket = flatArgsInfo.defaultCompilerArgumentsBucket
-    val converter = FlatToRawCompilerArgumentsBucketConverter(CommonCompilerArguments::class.java.classLoader)
-    val currentCompilerArguments = converter.convert(currentCompilerArgumentsBucket)
-    val defaultCompilerArguments = converter.convert(defaultCompilerArgumentsBucket)
-    val dependencyClasspath = flatArgsInfo.dependencyClasspath.map { PathUtil.toSystemIndependentName(it) }
-    if (skipCheck || currentCompilerArguments.isNotEmpty()) {
-        parseCompilerArgumentsToFacet(currentCompilerArguments, defaultCompilerArguments, kotlinFacet, modelsProvider)
+    val currentBucket = flatArgsInfo.currentCompilerArgumentsBucket
+    val defaultBucket = flatArgsInfo.defaultCompilerArgumentsBucket
+    if (skipCheck || !currentBucket.isEmpty) {
+        parseCompilerArgumentsBucketsToFacet(currentBucket, defaultBucket, kotlinFacet, modelsProvider)
     }
+    val dependencyClasspath = flatArgsInfo.dependencyClasspath.map { PathUtil.toSystemIndependentName(it) }
     adjustClasspath(kotlinFacet, dependencyClasspath)
 }
 
@@ -332,10 +327,8 @@ private fun getExplicitOutputPath(moduleNode: DataNode<ModuleData>, platformKind
         return null
     }
 
-    val k2jsArgumentList = moduleNode.flatCompilerArgumentBySourceSet?.get(sourceSet)?.currentCompilerArgumentsBucket?.let {
-        FlatToRawCompilerArgumentsBucketConverter(CommonCompilerArguments::class.java.classLoader).convert(it)
-    } ?: return null
-    return K2JSCompilerArguments().apply { parseCommandLineArguments(k2jsArgumentList, this) }.outputFile
+    return moduleNode.flatCompilerArgumentBySourceSet?.get(sourceSet)?.currentCompilerArgumentsBucket
+        ?.extractSingleArgumentValue(K2JSCompilerArguments::outputFile)
 }
 
 internal fun adjustClasspath(kotlinFacet: KotlinFacet, dependencyClasspath: List<String>) {

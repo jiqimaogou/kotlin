@@ -8,12 +8,9 @@ package org.jetbrains.kotlin.caching
 import org.jetbrains.kotlin.cli.common.arguments.CommonCompilerArguments
 import org.jetbrains.kotlin.gradle.getMethodOrNull
 import org.jetbrains.kotlin.utils.addToStdlib.cast
-import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 import kotlin.reflect.KMutableProperty1
-import kotlin.reflect.KProperty1
-import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.full.memberProperties
 
 typealias CachedCompilerArgumentBySourceSet = Map<String, CachedArgsInfo>

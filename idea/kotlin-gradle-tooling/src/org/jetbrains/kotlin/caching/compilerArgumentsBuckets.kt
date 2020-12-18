@@ -55,3 +55,7 @@ class FlatCompilerArgumentsBucket(
         freeArgs.addAll(otherBucket.freeArgs)
     }
 }
+
+val FlatCompilerArgumentsBucket.isEmpty: Boolean
+    get() = classpathParts == null && singleArguments.isEmpty() && multipleArguments.isEmpty()
+            && flagArguments.isEmpty() && freeArgs.isEmpty() && internalArguments.isEmpty()
