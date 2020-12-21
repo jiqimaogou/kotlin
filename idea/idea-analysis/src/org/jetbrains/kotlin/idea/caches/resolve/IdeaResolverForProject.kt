@@ -77,6 +77,30 @@ class IdeaResolverForProject(
 
     override fun builtInsForModule(module: IdeaModuleInfo): KotlinBuiltIns = builtInsCache.getOrCreateIfNeeded(module)
 
+    override fun createModuleDescriptorUsingBuiltIns(module: IdeaModuleInfo, builtIns: KotlinBuiltIns): ModuleDescriptorImpl {
+        if (builtIns is JvmBuiltIns && module is SdkInfo) {
+            /*
+             * For SDK modules we create module for SDK during creating builtIns for it (see BuiltInsCache.getOrCreateIfNeeded),
+             *  because there is a circular dependency: SDK -> JvmBuiltIns for SDK -> SDK
+             * So we can enter here twice:
+             *   1. due to creating descriptor for SDK
+             *   2. due to creating builtins for descriptor from p.1
+             *
+             * Note that those enters are recursive, so first we came here from p.2 and after that from p.1
+             *
+             * To prevent recreating module descriptor for SDK on p.1 we can reuse one which was created on p.2 and
+             *   was saved to JvmBuiltIns.ownerModuleDescriptor
+             */
+            builtIns.ownerModuleDescriptor?.let { builtInsOwnerModule ->
+                val moduleInfo = builtInsOwnerModule.getCapability(ModuleInfo.Capability)
+                if (moduleInfo == module) {
+                    (builtInsOwnerModule as? ModuleDescriptorImpl)?.let { return it }
+                }
+            }
+        }
+        return super.createModuleDescriptorUsingBuiltIns(module, builtIns)
+    }
+
     override fun createResolverForModule(descriptor: ModuleDescriptor, moduleInfo: IdeaModuleInfo): ResolverForModule {
         val moduleContent = ModuleContent(moduleInfo, syntheticFilesByModule[moduleInfo] ?: listOf(), moduleInfo.contentScope())
 

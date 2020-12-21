@@ -54,7 +54,8 @@ class JvmBuiltIns(storageManager: StorageManager, kind: Kind) : KotlinBuiltIns(s
     }
 
     // Module containing JDK classes or having them among dependencies
-    private var ownerModuleDescriptor: ModuleDescriptor? = null
+    var ownerModuleDescriptor: ModuleDescriptor? = null
+        private set
     private var isAdditionalBuiltInsFeatureSupported: Boolean = true
 
     fun initialize(moduleDescriptor: ModuleDescriptor, isAdditionalBuiltInsFeatureSupported: Boolean) {

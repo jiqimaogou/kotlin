@@ -197,18 +197,30 @@ abstract class AbstractResolverForProject<M : ModuleInfo>(
     }
 
     private fun createModuleDescriptor(module: M): ModuleData {
-        val moduleDescriptor = ModuleDescriptorImpl(
+        val builtIns = builtInsForModule(module)
+        val moduleDescriptor = createModuleDescriptorUsingBuiltIns(module, builtIns)
+        /*
+         * In some cases in IDE module descriptor for module may be already created and initialized
+         *   (e.g. for case of descriptor for SDK, which is created during initializing builtIns for itself),
+         *   so there is no need to initialize dependencies for it again
+         */
+        if (module !in moduleInfoByDescriptor.values) {
+            moduleInfoByDescriptor[moduleDescriptor] = module
+            setupModuleDescriptor(module, moduleDescriptor)
+        }
+        val modificationTracker = (module as? TrackableModuleInfo)?.createModificationTracker() ?: fallbackModificationTracker
+        return ModuleData(moduleDescriptor, modificationTracker)
+    }
+
+    protected open fun createModuleDescriptorUsingBuiltIns(module: M, builtIns: KotlinBuiltIns): ModuleDescriptorImpl {
+        return ModuleDescriptorImpl(
             module.name,
             projectContext.storageManager,
-            builtInsForModule(module),
+            builtIns,
             module.platform,
             module.capabilities + listOf(RESOLUTION_ANCHOR_PROVIDER_CAPABILITY to resolutionAnchorProvider),
             module.stableName,
         )
-        moduleInfoByDescriptor[moduleDescriptor] = module
-        setupModuleDescriptor(module, moduleDescriptor)
-        val modificationTracker = (module as? TrackableModuleInfo)?.createModificationTracker() ?: fallbackModificationTracker
-        return ModuleData(moduleDescriptor, modificationTracker)
     }
 
     private fun renderResolversChainContents(): String {
