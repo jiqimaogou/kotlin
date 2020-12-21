@@ -71,6 +71,31 @@ abstract class AbstractKotlinGradleModelBuilder : ModelBuilderService {
         } catch (e: InvocationTargetException) {
             null // can be thrown if property is not initialized yet
         } ?: "main"
+
+        @Suppress("UNCHECKED_CAST")
+        fun Task.getCompilerArgumentsBucket(methodName: String): FlatCompilerArgumentsBucket? {
+            return try {
+                val unsafeBucket = javaClass.getDeclaredMethod(methodName).invoke(this) as List<Any?>
+                val classpathParts = unsafeBucket[0] as Pair<String, List<String>>?
+                val singleArguments = unsafeBucket[1] as MutableMap<String, String>
+                val multipleArguments = unsafeBucket[2] as MutableMap<String, List<String>>
+                val flagArguments = unsafeBucket[3] as MutableList<String>
+                val internalArguments = unsafeBucket[4] as MutableList<String>
+                val freeArgs = unsafeBucket[5] as MutableList<String>
+                return FlatCompilerArgumentsBucket(
+                    classpathParts,
+                    singleArguments,
+                    multipleArguments,
+                    flagArguments,
+                    internalArguments,
+                    freeArgs
+                )
+            } catch (e: Exception) {
+                // No argument accessor method is available
+                null
+            }
+        }
+
     }
 }
 
@@ -152,15 +177,16 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
                 val sourceSetName = compileTask.getSourceSetName()
 
 
-                val currentCompilerArgumentsBucket = converter.convert(
-                    compileTask.getCompilerArguments("getSerializedCompilerArguments")
-                        ?: compileTask.getCompilerArguments("getSerializedCompilerArgumentsIgnoreClasspathIssues")
-                        ?: emptyList()
-                )
+                val currentCompilerArgumentsBucket = compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucket")
+                    ?: compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucketIgnoreClasspathIssues")
+                    ?: converter.convert(
+                        compileTask.getCompilerArguments("getSerializedCompilerArguments")
+                            ?: compileTask.getCompilerArguments("getSerializedCompilerArgumentsIgnoreClasspathIssues")
+                            ?: emptyList()
+                    )
 
-                val defaultCompilerArgumentsBucket = converter.convert(
-                    compileTask.getCompilerArguments("getDefaultSerializedCompilerArguments").orEmpty(),
-                )
+                val defaultCompilerArgumentsBucket = compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucket")
+                    ?: converter.convert(compileTask.getCompilerArguments("getDefaultSerializedCompilerArguments").orEmpty())
 
                 val dependencyClasspath = compileTask.getDependencyClasspath()
                 flatArgumentsBySourceSet[sourceSetName] = FlatArgsInfoImpl(

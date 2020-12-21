@@ -20,6 +20,7 @@ import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.TaskProvider
 import org.jetbrains.kotlin.caching.*
+import org.jetbrains.kotlin.gradle.AbstractKotlinGradleModelBuilder.Companion.getCompilerArgumentsBucket
 import org.jetbrains.kotlin.gradle.KotlinMPPGradleModel.Companion.NO_KOTLIN_NATIVE_HOME
 import org.jetbrains.kotlin.gradle.KotlinSourceSet.Companion.COMMON_MAIN_SOURCE_SET_NAME
 import org.jetbrains.kotlin.gradle.KotlinSourceSet.Companion.COMMON_TEST_SOURCE_SET_NAME
@@ -789,13 +790,15 @@ class KotlinMPPGradleModelBuilder : ModelBuilderService {
     ): FlatArgsInfo? {
         val compileTaskClass = compileKotlinTask.javaClass
         val converter = RawToFlatCompilerArgumentsBucketConverter(classLoader)
-        val currentFlatArgumentsBucket = compileTaskClass.getMethodOrNull("getSerializedCompilerArguments")
-            ?.let { safelyGetArguments(compileKotlinTask, it) }
-            ?.let { converter.convert(it) }
+        val currentFlatArgumentsBucket = compileKotlinTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucket")
+            ?: compileTaskClass.getMethodOrNull("getSerializedCompilerArguments")
+                ?.let { safelyGetArguments(compileKotlinTask, it) }
+                ?.let { converter.convert(it) }
             ?: return null
-        val defaultFlatArgumentsBucket = compileTaskClass.getMethodOrNull("getDefaultSerializedCompilerArguments")
-            ?.let { safelyGetArguments(compileKotlinTask, it) }
-            ?.let { converter.convert(it) }
+        val defaultFlatArgumentsBucket = compileKotlinTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucket")
+            ?: compileTaskClass.getMethodOrNull("getDefaultSerializedCompilerArguments")
+                ?.let { safelyGetArguments(compileKotlinTask, it) }
+                ?.let { converter.convert(it) }
             ?: FlatCompilerArgumentsBucket()
         val dependencyClasspath = buildDependencyClasspath(compileKotlinTask)
         return FlatArgsInfoImpl(currentFlatArgumentsBucket, defaultFlatArgumentsBucket, dependencyClasspath)
