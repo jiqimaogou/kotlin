@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
 @TestMetadata("compiler/testData/codegen/java9/box")
 @TestDataPath("$PROJECT_ROOT")
 @RunWith(JUnit3RunnerWithInners.class)
-public class Jdk9BlackBoxCodegenTestGenerated extends AbstractJdk9BlackBoxCodegenTest {
+public class Jdk9IrBlackBoxCodegenTestGenerated extends AbstractJdk9IrBlackBoxCodegenTest {
     private void runTest(String testDataFilePath) throws Exception {
         KotlinTestUtils.runTest(this::doTest, this, testDataFilePath);
     }

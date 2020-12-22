@@ -155,6 +155,10 @@ fun main(args: Array<String>) {
                 model("codegen/java9/box")
             }
 
+            testClass<AbstractJdk9IrBlackBoxCodegenTest> {
+                model("codegen/java9/box")
+            }
+
             testClass<AbstractScriptCodegenTest> {
                 model("codegen/script", extension = "kts")
             }
