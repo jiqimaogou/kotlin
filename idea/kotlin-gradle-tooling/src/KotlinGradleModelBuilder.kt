@@ -10,13 +10,15 @@ import org.gradle.api.Task
 import org.gradle.api.artifacts.Dependency
 import org.gradle.api.artifacts.ProjectDependency
 import org.jetbrains.kotlin.caching.*
-import org.jetbrains.kotlin.utils.addToStdlib.ifNotEmpty
+import org.jetbrains.kotlin.gradle.AbstractKotlinGradleModelBuilder.Companion.getCompilerArgumentsBucket
 import org.jetbrains.plugins.gradle.tooling.ErrorMessageBuilder
 import org.jetbrains.plugins.gradle.tooling.ModelBuilderService
 import java.io.File
 import java.io.Serializable
 import java.lang.reflect.InvocationTargetException
 import java.util.*
+import kotlin.collections.HashMap
+import kotlin.collections.LinkedHashMap
 
 interface KotlinGradleModel : Serializable {
     val hasKotlinPlugin: Boolean
@@ -95,9 +97,11 @@ abstract class AbstractKotlinGradleModelBuilder : ModelBuilderService {
                 null
             }
         }
-
     }
 }
+
+val Task.isOptimalStrategySuitable: Boolean
+    get() = javaClass.declaredMethods.any { it.name == "getFlatCompilerArgumentsBucket" }
 
 class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
 
@@ -161,45 +165,17 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
         }
     }
 
-    override fun buildAll(modelName: String?, project: Project): KotlinGradleModelImpl {
+    override fun buildAll(modelName: String?, project: Project): KotlinGradleModel {
 
         val kotlinPluginId = kotlinPluginIds.singleOrNull { project.plugins.findPlugin(it) != null }
         val platformPluginId = platformPluginIds.singleOrNull { project.plugins.findPlugin(it) != null }
 
-        val flatArgumentsBySourceSet = LinkedHashMap<String, FlatArgsInfo>()
         val extraProperties = HashMap<String, KotlinTaskProperties>()
-
-        project.getAllTasks(false)[project]?.filter { it.javaClass.name in kotlinCompileTaskClasses }?.ifNotEmpty {
-            val kotlinExt = project.extensions.getByName("kotlin")
-            val converter = RawToFlatCompilerArgumentsBucketConverter(kotlinExt::class.java.classLoader)
-
-            forEach { compileTask ->
-                val sourceSetName = compileTask.getSourceSetName()
-
-
-                val currentCompilerArgumentsBucket = compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucket")
-                    ?: compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucketIgnoreClasspathIssues")
-                    ?: converter.convert(
-                        compileTask.getCompilerArguments("getSerializedCompilerArguments")
-                            ?: compileTask.getCompilerArguments("getSerializedCompilerArgumentsIgnoreClasspathIssues")
-                            ?: emptyList()
-                    )
-
-                val defaultCompilerArgumentsBucket = compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucket")
-                    ?: converter.convert(compileTask.getCompilerArguments("getDefaultSerializedCompilerArguments").orEmpty())
-
-                val dependencyClasspath = compileTask.getDependencyClasspath()
-                flatArgumentsBySourceSet[sourceSetName] = FlatArgsInfoImpl(
-                    currentCompilerArgumentsBucket,
-                    defaultCompilerArgumentsBucket,
-                    dependencyClasspath
-                )
-                extraProperties.acknowledgeTask(compileTask, null)
-            }
-        }
         val platform = platformPluginId ?: pluginToPlatform.entries.singleOrNull { project.plugins.findPlugin(it.key) != null }?.value
         val implementedProjects = getImplementedProjects(project)
-
+        val kotlinExt = project.extensions.getByName("kotlin")
+        val compileTasksList = project.getAllTasks(false)[project]?.filter { it.javaClass.name in kotlinCompileTaskClasses }.orEmpty()
+        val flatArgumentsBySourceSet = compileTasksList.calculateFlatArgumentsBySourceSet(kotlinExt, extraProperties)
         return KotlinGradleModelImpl(
             kotlinPluginId != null || platformPluginId != null,
             flatArgumentsBySourceSet,
@@ -210,5 +186,43 @@ class KotlinGradleModelBuilder : AbstractKotlinGradleModelBuilder() {
             extraProperties,
             project.gradle.gradleUserHomeDir.absolutePath
         )
+    }
+
+    private fun List<Task>.calculateFlatArgumentsBySourceSet(
+        kotlinExt: Any,
+        extraProperties: HashMap<String, KotlinTaskProperties>,
+    ): FlatCompilerArgumentBySourceSet {
+        val flatArgumentsBySourceSet = LinkedHashMap<String, FlatArgsInfo>()
+        forEach { compileTask ->
+            val sourceSetName = compileTask.getSourceSetName()
+            val dependencyClasspath = compileTask.getDependencyClasspath()
+
+            var currentCompilerArgumentsBucket: FlatCompilerArgumentsBucket
+            var defaultCompilerArgumentsBucket: FlatCompilerArgumentsBucket
+            if (compileTask.isOptimalStrategySuitable) {
+                currentCompilerArgumentsBucket = compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucket")
+                    ?: compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucketIgnoreClasspathIssues")
+                            ?: FlatCompilerArgumentsBucket()
+                defaultCompilerArgumentsBucket = compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucket")
+                    ?: FlatCompilerArgumentsBucket()
+            } else {
+                val converter = RawToFlatCompilerArgumentsBucketConverter(kotlinExt::class.java.classLoader)
+                currentCompilerArgumentsBucket = converter.convert(
+                    compileTask.getCompilerArguments("getSerializedCompilerArguments")
+                        ?: compileTask.getCompilerArguments("getSerializedCompilerArgumentsIgnoreClasspathIssues")
+                        ?: emptyList()
+                )
+                defaultCompilerArgumentsBucket = compileTask.getCompilerArgumentsBucket("getFlatCompilerArgumentsBucket")
+                    ?: converter.convert(compileTask.getCompilerArguments("getDefaultSerializedCompilerArguments").orEmpty())
+            }
+
+            flatArgumentsBySourceSet[sourceSetName] = FlatArgsInfoImpl(
+                currentCompilerArgumentsBucket,
+                defaultCompilerArgumentsBucket,
+                dependencyClasspath
+            )
+            extraProperties.acknowledgeTask(compileTask, null)
+        }
+        return flatArgumentsBySourceSet
     }
 }

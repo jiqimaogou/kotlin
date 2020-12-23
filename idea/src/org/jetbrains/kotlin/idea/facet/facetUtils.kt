@@ -17,8 +17,6 @@ import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.text.StringUtil
-import com.jetbrains.rd.util.firstOrNull
-import org.jetbrains.kotlin.caching.DividedPropertiesWithArgumentAnnotationInfoManager
 import org.jetbrains.kotlin.caching.FlatCompilerArgumentsBucket
 import org.jetbrains.kotlin.cli.common.arguments.*
 import org.jetbrains.kotlin.compilerRunner.ArgumentUtils
@@ -38,7 +36,6 @@ import org.jetbrains.kotlin.platform.impl.JvmIdePlatformKind
 import org.jetbrains.kotlin.platform.jvm.JvmPlatforms
 import org.jetbrains.kotlin.psi.NotNullableUserDataProperty
 import kotlin.reflect.KProperty1
-import kotlin.reflect.full.memberProperties
 
 var Module.hasExternalSdkConfiguration: Boolean
         by NotNullableUserDataProperty(Key.create<Boolean>("HAS_EXTERNAL_SDK_CONFIGURATION"), false)

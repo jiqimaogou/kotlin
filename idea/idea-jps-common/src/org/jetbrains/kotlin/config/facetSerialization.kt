@@ -554,26 +554,30 @@ private fun FlatCompilerArgumentsBucket.writeCompilerArgumentsBucket(
 ): Element {
     val bucketElement = Element("compilerArgumentsBucket")
 
-    classpathParts?.also { partKv ->
-        bucketElement.setAttribute("classpathKey", partKv.first)
-        saveElementsList(bucketElement, partKv.second, "classpathParts", "classpathPart")
+    val classpathPartsElement = Element("classpathParts").also { classpathPartsElement ->
+        classpathParts?.also { partKv ->
+            classpathPartsElement.setAttribute("key", partKv.first)
+            saveElementsList(classpathPartsElement, partKv.second, "parts", "part")
+        }
     }
+    bucketElement.addContent(classpathPartsElement)
+
     val singleArgumentsElement = Element("singleArguments").also { singleArgsElement ->
         CommonCompilerArguments::languageVersion.calculateArgumentAnnotation()?.takeIf { autoAdvanceLanguageVersion }?.apply {
             singleArguments.remove(value)
-            singleArguments.remove(shortName)
-            singleArguments.remove(deprecatedName)
+            singleArguments.remove(alias)
+            singleArguments.remove(otherName)
         }
         CommonCompilerArguments::apiVersion.calculateArgumentAnnotation()?.takeIf { autoAdvanceApiVersion }?.apply {
             singleArguments.remove(value)
-            singleArguments.remove(shortName)
-            singleArguments.remove(deprecatedName)
+            singleArguments.remove(alias)
+            singleArguments.remove(otherName)
         }
 
         singleArguments.forEach { (k, v) ->
             Element("singleArgument").apply {
-                setAttribute("singleArgumentKey", k)
-                setAttribute("singleArgumentValue", v)
+                setAttribute("key", k)
+                setAttribute("value", v)
                 singleArgsElement.addContent(this)
             }
         }
@@ -583,14 +587,14 @@ private fun FlatCompilerArgumentsBucket.writeCompilerArgumentsBucket(
     val multipleArgumentsElement = Element("multipleArguments").also { multipleArgsElement ->
         multipleArguments.forEach { (k, v) ->
             Element("multipleArgument").apply {
-                setAttribute("multipleArgumentKey", k)
-                saveElementsList(this, v, "singleArgumentValues", "singleArgumentValue")
+                setAttribute("key", k)
+                saveElementsList(this, v, "values", "value")
                 multipleArgsElement.addContent(this)
             }
         }
     }
     bucketElement.addContent(multipleArgumentsElement)
-    saveElementsList(bucketElement, flagArguments, "flagArguments", "flagArgument")
+    saveElementsList(bucketElement, flagArguments, "flags", "flag")
     saveElementsList(bucketElement, freeArgs, "freeArgs", "freeArg")
     saveElementsList(bucketElement, internalArguments, "internalArguments", "internalArgument")
     element.addContent(bucketElement)

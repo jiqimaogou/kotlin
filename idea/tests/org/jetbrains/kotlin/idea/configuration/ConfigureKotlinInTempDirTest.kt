@@ -124,8 +124,34 @@ open class ConfigureKotlinInTempDirTest : AbstractConfigureKotlinInTempDirTest()
     )
 
     fun testLoadAndSaveProjectHMPPFacetConfig() = doTestLoadAndSaveProjectWithFacetConfig(
-        "platform=\"Common (experimental) \" allPlatforms=\"JS []/JVM [1.6]/Native []\"",
-        "platform=\"Common (experimental) \" allPlatforms=\"JS []/JVM [1.6]/Native []/Native [general]\""
+        """
+        |      <configuration version="3" platform="Common (experimental) " allPlatforms="JS []/JVM [1.6]/Native []" useProjectSettings="false">
+        |        <compilerSettings>
+        |          <option name="additionalArguments" value="-version -Xallow-kotlin-package -Xskip-metadata-version-check" />
+        |        </compilerSettings>
+        |        <compilerArguments>
+        |          <option name="languageVersion" value="1.1" />
+        |          <option name="apiVersion" value="1.0" />
+        |        </compilerArguments>
+        |      </configuration>
+        """.trimMargin(),
+        """
+        |      <configuration version="4" platform="Common (experimental) " allPlatforms="JS []/JVM [1.6]/Native []/Native [general]" useProjectSettings="false">
+        |        <compilerSettings>
+        |          <option name="additionalArguments" value="-version -Xallow-kotlin-package -Xskip-metadata-version-check" />
+        |        </compilerSettings>
+        |        <compilerArgumentsBucket>
+        |          <classpathParts />
+        |          <singleArguments>
+        |            <singleArgument key="-Xexplicit-api" value="disable" />
+        |            <singleArgument key="-api-version" value="1.0" />
+        |            <singleArgument key="-Xcoroutines" value="default" />
+        |            <singleArgument key="-language-version" value="1.1" />
+        |          </singleArguments>
+        |          <multipleArguments />
+        |        </compilerArgumentsBucket>
+        |      </configuration>
+        """.trimMargin()
     )
 
     fun testApiVersionWithoutLanguageVersion() {
