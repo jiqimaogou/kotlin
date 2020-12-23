@@ -57,7 +57,6 @@ import java.lang.reflect.Proxy
 import java.util.*
 import java.util.stream.Collectors
 import kotlin.collections.HashMap
-import kotlin.reflect.KProperty1
 
 @Order(ExternalSystemConstants.UNORDERED + 1)
 open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionCompat() {
@@ -270,7 +269,7 @@ open class KotlinMPPGradleProjectResolver : AbstractProjectResolverExtensionComp
 
                 if (compilation.platform == KotlinPlatform.JVM || compilation.platform == KotlinPlatform.ANDROID) {
                     ideModule.compilationDataByCompilation[compilation]?.targetCompatibility =
-                        flatArgsInfo.currentCompilerArgumentsBucket.extractSingleNullableArgumentValue(K2JVMCompilerArguments::jvmTarget)
+                        flatArgsInfo.currentCompilerArgumentsBucket.extractSingleArgumentValue(K2JVMCompilerArguments::jvmTarget)
                 }
 
             }

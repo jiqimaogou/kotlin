@@ -5,7 +5,6 @@
 
 package org.jetbrains.kotlin.config
 
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.PathUtil
 import com.intellij.util.xmlb.SerializationFilter
 import com.intellij.util.xmlb.SkipDefaultsSerializationFilter
@@ -13,7 +12,6 @@ import com.intellij.util.xmlb.XmlSerializer
 import org.jdom.DataConversionException
 import org.jdom.Element
 import org.jdom.Text
-import org.jetbrains.kotlin.caching.DividedPropertiesWithArgumentAnnotationInfoManager
 import org.jetbrains.kotlin.caching.FlatCompilerArgumentsBucket
 import org.jetbrains.kotlin.cli.common.arguments.*
 import org.jetbrains.kotlin.load.java.JvmAbi
@@ -24,7 +22,6 @@ import org.jetbrains.kotlin.platform.js.isJs
 import org.jetbrains.kotlin.platform.jvm.JdkPlatform
 import org.jetbrains.kotlin.platform.jvm.isJvm
 import org.jetbrains.kotlin.platform.konan.*
-import org.jetbrains.kotlin.utils.addToStdlib.cast
 import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 import java.lang.reflect.Modifier
 import kotlin.reflect.KClass
@@ -195,7 +192,8 @@ private fun readV3Config(element: Element): KotlinFacetSettings = readV2AndLater
 }
 
 private fun readLatestConfig(element: Element): KotlinFacetSettings = readV2AndLaterConfig(element) {
-    targetPlatform?.let { readCompilerArgumentsBucket(element)?.toCompilerArguments(it) }?.also { it.detectVersionAutoAdvance() }
+    targetPlatform?.let { readCompilerArgumentsBucket(element)?.toCompilerArguments(it) }
+        ?.also { it.detectVersionAutoAdvance() }
 }
 
 private fun readElementsList(element: Element, rootElementName: String, elementName: String): List<String>? {
@@ -604,23 +602,22 @@ private fun FlatCompilerArgumentsBucket.writeCompilerArgumentsBucket(
 fun FlatCompilerArgumentsBucket.toCompilerArguments(targetPlatform: TargetPlatform): CommonCompilerArguments =
     targetPlatform.createArguments().apply {
         val properties = this::class.java.kotlin.memberProperties
-            .filter { it.calculateArgumentAnnotation() != null }
+            .filter {
+                it != K2JVMCompilerArguments::classpath
+                        && it != K2MetadataCompilerArguments::classpath
+                        && it.calculateArgumentAnnotation() != null
+            }
 
-        properties.filter { it.returnType.let { rt -> rt.classifier == String::class && rt.isMarkedNullable } }
-            .mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, String?>>() }
-            .forEach { k -> extractSingleNullableArgumentValue(k)?.also { k.set(this, it) } }
-
-        properties.filter { it.returnType.let { rt -> rt.classifier == String::class && !rt.isMarkedNullable } }
-            .mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, String>>() }
+        properties.filter { it.returnType.classifier == String::class }
+            .mapNotNull { it.safeAs<KMutableProperty1<CommonToolArguments, String?>>() }
             .forEach { k -> extractSingleArgumentValue(k)?.also { k.set(this, it) } }
 
-
         properties.filter { (it.returnType.classifier as? KClass<*>)?.java?.isArray == true }
-            .mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, Array<String>?>>() }
+            .mapNotNull { it.safeAs<KMutableProperty1<CommonToolArguments, Array<String>?>>() }
             .forEach { k -> extractMultipleArgumentValue(k)?.also { k.set(this, it) } }
 
         properties.filter { it.returnType.classifier == Boolean::class }
-            .mapNotNull { it.safeAs<KMutableProperty1<CommonCompilerArguments, Boolean>>() }
+            .mapNotNull { it.safeAs<KMutableProperty1<CommonToolArguments, Boolean>>() }
             .forEach { k -> extractFlagArgumentValue(k)?.also { k.set(this, it) } }
 
         when (this) {

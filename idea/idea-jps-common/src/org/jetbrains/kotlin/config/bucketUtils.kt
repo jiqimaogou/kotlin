@@ -5,8 +5,14 @@
 
 package org.jetbrains.kotlin.config
 
-import org.jetbrains.kotlin.caching.*
-import org.jetbrains.kotlin.cli.common.arguments.*
+import org.jetbrains.kotlin.caching.ArgumentAnnotationInfo
+import org.jetbrains.kotlin.caching.ArgumentAnnotationInfoImpl
+import org.jetbrains.kotlin.caching.FlatCompilerArgumentsBucket
+import org.jetbrains.kotlin.caching.isSuitableValue
+import org.jetbrains.kotlin.cli.common.arguments.Argument
+import org.jetbrains.kotlin.cli.common.arguments.CommonToolArguments
+import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
+import org.jetbrains.kotlin.cli.common.arguments.K2MetadataCompilerArguments
 import org.jetbrains.kotlin.utils.addToStdlib.safeAs
 import java.io.File
 import kotlin.reflect.KMutableProperty1
@@ -30,19 +36,11 @@ fun CommonToolArguments.toFlatCompilerArguments(): FlatCompilerArgumentsBucket {
     val flatFlags = flagPropsToValues.filterValues { it }.mapNotNull { flagProperties[it.key]?.value }
 
     val singleProperties = propertiesToArgumentAnnotationMap
-        .filterKeys { it.returnType.classifier == String::class && !it.returnType.isMarkedNullable }
-    val singlePropsToValues = singleProperties.keys.mapNotNull { it.safeAs<KProperty1<CommonToolArguments, String>>() }
+        .filterKeys { it.returnType.classifier == String::class }
+    val singlePropsToValues = singleProperties.keys.mapNotNull { it.safeAs<KProperty1<CommonToolArguments, String?>>() }
         .associateWith { it.get(this) }
     val singleArguments = singlePropsToValues.map { singleProperties[it.key] to it.value }
-        .filter { it.first != null }.associate { it.first!!.value to it.second }
-
-    val singleNullableProperties = propertiesToArgumentAnnotationMap
-        .filterKeys { it.returnType.classifier == String::class && it.returnType.isMarkedNullable }
-    val singleNullablePropsToValues = singleNullableProperties.keys
-        .mapNotNull { it.safeAs<KProperty1<CommonToolArguments, String?>>() }
-        .associateWith { it.get(this) }
-    val singleNullableArguments = singleNullablePropsToValues.map { singleNullableProperties[it.key] to it.value }
-        .filter { it.first != null && it.second != null }.associate { it.first!!.value to it.second!! }
+        .mapNotNull { (f, s) -> if (f != null && s != null) f.value to s else null }.toMap()
 
     val multipleProperties = propertiesToArgumentAnnotationMap.filterKeys { it.returnType.classifier?.javaClass?.isArray == true }
     val multiplePropsToValues = multipleProperties.keys.mapNotNull { it.safeAs<KProperty1<CommonToolArguments, Array<String>?>>() }
@@ -63,7 +61,7 @@ fun CommonToolArguments.toFlatCompilerArguments(): FlatCompilerArgumentsBucket {
 
     return FlatCompilerArgumentsBucket(
         classpathArguments,
-        (singleArguments + singleNullableArguments).toMutableMap(),
+        singleArguments.toMutableMap(),
         multipleArguments.toMutableMap(),
         flatFlags.toMutableList(),
         internalArguments.toMutableList(),
@@ -76,26 +74,15 @@ fun <R> KProperty1<*, R>.calculateArgumentAnnotation(): ArgumentAnnotationInfo? 
     return with(argumentAnnotation) { ArgumentAnnotationInfoImpl(value, shortName, deprecatedName, delimiter) }
 }
 
-fun FlatCompilerArgumentsBucket.extractSingleNullableArgument(
-    property: KMutableProperty1<*, String?>
-): Pair<String, String>? {
-    val argumentAnnotationInfo = property.calculateArgumentAnnotation() ?: return null
-    return singleArguments.entries.firstOrNull { argumentAnnotationInfo.isSuitableValue(it.key) }?.toPair()
-}
-
-fun FlatCompilerArgumentsBucket.extractSingleNullableArgumentValue(
-    property: KMutableProperty1<*, String?>
-): String? = extractSingleNullableArgument(property)?.second
-
 fun FlatCompilerArgumentsBucket.extractSingleArgument(
-    property: KMutableProperty1<*, String>
+    property: KMutableProperty1<*, String?>
 ): Pair<String, String>? {
     val argumentAnnotationInfo = property.calculateArgumentAnnotation() ?: return null
     return singleArguments.entries.firstOrNull { argumentAnnotationInfo.isSuitableValue(it.key) }?.toPair()
 }
 
 fun FlatCompilerArgumentsBucket.extractSingleArgumentValue(
-    property: KMutableProperty1<*, String>
+    property: KMutableProperty1<*, String?>
 ): String? = extractSingleArgument(property)?.second
 
 fun FlatCompilerArgumentsBucket.extractMultipleArgument(

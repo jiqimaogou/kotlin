@@ -6,15 +6,14 @@
 package org.jetbrains.kotlin.caching
 
 import org.jetbrains.kotlin.cli.common.arguments.CommonToolArguments
+import org.jetbrains.kotlin.cli.common.arguments.K2JVMCompilerArguments
+import org.jetbrains.kotlin.cli.common.arguments.K2MetadataCompilerArguments
 import org.jetbrains.kotlin.gradle.getMethodOrNull
 import org.jetbrains.kotlin.utils.addToStdlib.cast
-import java.lang.reflect.Method
 import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.full.declaredMemberProperties
 
 typealias FlatCompilerArgumentBySourceSet = Map<String, FlatArgsInfo>
-
-const val PARSE_ARGUMENTS_CLASS = "org.jetbrains.kotlin.cli.common.arguments.ParseCommandLineArgumentsKt"
 
 const val COMMON_TOOL_ARGUMENTS_CLASS = "org.jetbrains.kotlin.cli.common.arguments.CommonToolArguments"
 const val JS_DCE_ARGUMENTS_CLASS = "org.jetbrains.kotlin.cli.common.arguments.K2JSDceArguments"
@@ -109,8 +108,7 @@ internal fun ArgumentAnnotationInfo.suitArgument(arg: String): SuitResult? {
 
 data class DividedPropertiesWithArgumentAnnotationInfo(
     val flagPropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonToolArguments, Boolean>, ArgumentAnnotationInfo>,
-    val singleNullablePropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonToolArguments, String?>, ArgumentAnnotationInfo>,
-    val singlePropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonToolArguments, String>, ArgumentAnnotationInfo>,
+    val singlePropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonToolArguments, String?>, ArgumentAnnotationInfo>,
     val multiplePropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonToolArguments, Array<String>?>, ArgumentAnnotationInfo>,
     val classpathPropertiesToArgumentAnnotation: Map<KMutableProperty1<CommonToolArguments, String?>, ArgumentAnnotationInfo>
 )
@@ -170,17 +168,15 @@ class DividedPropertiesWithArgumentAnnotationInfoManager(val classLoader: ClassL
             }
         }
 
-
-        val classpathPropsToArgumentAnnotation = propertiesToArgumentAnnotationInfoMap.filter { it.key.name == "classpath" }
+        val classpathPropsToArgumentAnnotation = propertiesToArgumentAnnotationInfoMap
+            .filterKeys { it == K2JVMCompilerArguments::classpath || it == K2MetadataCompilerArguments::classpath }
             .mapNotNull { it.value?.let { v -> it.key.cast<KMutableProperty1<CommonToolArguments, String?>>() to v } }.toMap()
-        val flagPropsToArgumentAnnotation = propertiesToArgumentAnnotationInfoMap.filter { it.key.returnType.classifier == Boolean::class }
+        val flagPropsToArgumentAnnotation = propertiesToArgumentAnnotationInfoMap
+            .filterKeys { it.returnType.classifier == Boolean::class }
             .mapNotNull { it.value?.let { v -> it.key.cast<KMutableProperty1<CommonToolArguments, Boolean>>() to v } }.toMap()
-        val singleNullablePropsToArgumentAnnotation = propertiesToArgumentAnnotationInfoMap
-            .filter { it.key.returnType.classifier == String::class && it.key.returnType.isMarkedNullable && it.key.name != "classpath" }
-            .mapNotNull { it.value?.let { v -> it.key.cast<KMutableProperty1<CommonToolArguments, String?>>() to v } }.toMap()
         val singlePropsToArgumentAnnotation = propertiesToArgumentAnnotationInfoMap
-            .filter { it.key.returnType.classifier == String::class && !it.key.returnType.isMarkedNullable && it.key.name != "classpath" }
-            .mapNotNull { it.value?.let { v -> it.key.cast<KMutableProperty1<CommonToolArguments, String>>() to v } }.toMap()
+            .filterKeys { it.returnType.classifier == String::class && it !in classpathPropsToArgumentAnnotation.keys }
+            .mapNotNull { it.value?.let { v -> it.key.cast<KMutableProperty1<CommonToolArguments, String?>>() to v } }.toMap()
         val multiplePropsToArgumentAnnotation =
             propertiesToArgumentAnnotationInfoMap.filter { it.key.returnType.classifier == Array<String>::class }
                 .mapNotNull { it.value?.let { v -> it.key.cast<KMutableProperty1<CommonToolArguments, Array<String>?>>() to v } }
@@ -188,7 +184,6 @@ class DividedPropertiesWithArgumentAnnotationInfoManager(val classLoader: ClassL
 
         DividedPropertiesWithArgumentAnnotationInfo(
             flagPropsToArgumentAnnotation,
-            singleNullablePropsToArgumentAnnotation,
             singlePropsToArgumentAnnotation,
             multiplePropsToArgumentAnnotation,
             classpathPropsToArgumentAnnotation

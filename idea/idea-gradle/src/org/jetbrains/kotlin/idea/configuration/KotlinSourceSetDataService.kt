@@ -229,12 +229,12 @@ class KotlinSourceSetDataService : AbstractProjectDataService<GradleSourceSetDat
 
                 if (kotlinSourceSet.isTestModule) {
                     testOutputPath = runIf(targetPlatform?.isJs() == true) {
-                        currentArgumentsBucket?.extractSingleNullableArgumentValue(K2JSCompilerArguments::outputFile)
+                        currentArgumentsBucket?.extractSingleArgumentValue(K2JSCompilerArguments::outputFile)
                     }
                     productionOutputPath = null
                 } else {
                     productionOutputPath = runIf(targetPlatform?.isJs() == true) {
-                        currentArgumentsBucket?.extractSingleNullableArgumentValue(K2JSCompilerArguments::outputFile)
+                        currentArgumentsBucket?.extractSingleArgumentValue(K2JSCompilerArguments::outputFile)
                     }
                     testOutputPath = null
                 }

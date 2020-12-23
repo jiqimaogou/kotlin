@@ -20,8 +20,7 @@ class RawToFlatCompilerArgumentsBucketConverter(val classLoader: ClassLoader) :
     override fun convert(from: RawCompilerArgumentsBucket): FlatCompilerArgumentsBucket {
 
         val singleNullablePropertiesToArgumentAnnotation =
-            dividedPropertiesWithArgumentAnnotationInfo.singleNullablePropertiesToArgumentAnnotation
-        val singlePropertiesToArgumentAnnotation = dividedPropertiesWithArgumentAnnotationInfo.singlePropertiesToArgumentAnnotation
+            dividedPropertiesWithArgumentAnnotationInfo.singlePropertiesToArgumentAnnotation
         val multiplePropertiesToArgumentAnnotation = dividedPropertiesWithArgumentAnnotationInfo.multiplePropertiesToArgumentAnnotation
         val flagPropertiesToArgumentAnnotation = dividedPropertiesWithArgumentAnnotationInfo.flagPropertiesToArgumentAnnotation
         val classpathPropertiesToArgumentAnnotation = dividedPropertiesWithArgumentAnnotationInfo.classpathPropertiesToArgumentAnnotation
@@ -33,9 +32,6 @@ class RawToFlatCompilerArgumentsBucketConverter(val classLoader: ClassLoader) :
             ?.let { it.key to it.value.split(File.pathSeparator) }
 
         val flattenSingleArguments = mutableMapOf<String, String>()
-        singlePropertiesToArgumentAnnotation.values.forEach {
-            flattenSingleArguments += it.processArgumentWithInfo(from, processedArguments)
-        }
         singleNullablePropertiesToArgumentAnnotation.values.forEach {
             flattenSingleArguments += it.processArgumentWithInfo(from, processedArguments)
         }
